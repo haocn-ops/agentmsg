@@ -1,0 +1,59 @@
+# Binaries
+build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go
+vendor/
+*.test
+coverage.html
+coverage.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Build artifacts
+dist/
+release/
+*.tar.gz
+
+# Kubernetes
+kubeconfig*
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Docker
+.docker/
+
+# Metrics
+*.prom

@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentmsg
+  labels:
+    name: agentmsg
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentmsg-config
+  namespace: agentmsg
+data:
+  API_GATEWAY_PORT: "8080"
+  MESSAGE_ENGINE_PORT: "8081"
+  LOG_LEVEL: "info"
+  ENV: "production"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agentmsg-secrets
+  namespace: agentmsg
+type: Opaque
+stringData:
+  JWT_SECRET: "CHANGE_ME_IN_PRODUCTION"
+  DATABASE_URL: "postgres://agentmsg:PASSWORD@postgres:5432/agentmsg?sslmode=require"
+  REDIS_URL: "redis://redis:6379/0"

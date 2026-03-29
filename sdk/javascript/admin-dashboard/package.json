@@ -1,0 +1,17 @@
+{
+  "name": "agentmsg-admin",
+  "version": "0.1.0",
+  "description": "AgentMsg Admin Dashboard",
+  "main": "index.html",
+  "scripts": {
+    "dev": "npx serve .",
+    "start": "npx serve . -p 3000"
+  },
+  "keywords": ["agentmsg", "admin", "dashboard"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "serve": "^14.2.1"
+  }
+}

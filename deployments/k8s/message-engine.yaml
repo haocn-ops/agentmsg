@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: message-engine
+  namespace: agentmsg
+  labels:
+    app: message-engine
+    tier: core
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: message-engine
+  template:
+    metadata:
+      labels:
+        app: message-engine
+        tier: core
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: message-engine
+      containers:
+        - name: engine
+          image: agentmsg/message-engine:latest
+          ports:
+            - name: grpc
+              containerPort: 8081
+            - name: metrics
+              containerPort: 9091
+          envFrom:
+            - configMapRef:
+                name: agentmsg-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agentmsg-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agentmsg-secrets
+                  key: REDIS_URL
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 2Gi
+            limits:
+              cpu: 4000m
+              memory: 8Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: message-engine
+              topologyKey: topology.kubernetes.io/zone
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: message-engine
+  namespace: agentmsg
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 8081
+      targetPort: 8081
+    - name: metrics
+      port: 9091
+      targetPort: 9091
+  selector:
+    app: message-engine
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: message-engine-hpa
+  namespace: agentmsg
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: message-engine
+  minReplicas: 6
+  maxReplicas: 50
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Pods
+      pods:
+        metric:
+          name: queue_depth
+        target:
+          type: AverageValue
+          averageValue: "1000"

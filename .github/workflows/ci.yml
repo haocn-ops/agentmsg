@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  GO_VERSION: '1.21'
+  DOCKER_IMAGE: agentmsg
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          golangci-lint run ./...
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: agentmsg
+          POSTGRES_PASSWORD: agentmsg
+          POSTGRES_DB: agentmsg_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgres://agentmsg:agentmsg@localhost:5432/agentmsg_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: coverage.out
+          fail_ci_if_error: false
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build API Gateway
+        run: |
+          go build -o build/api-gateway ./cmd/api-gateway
+
+      - name: Build Message Engine
+        run: |
+          go build -o build/message-engine ./cmd/message-engine
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: |
+            build/api-gateway
+            build/message-engine
+          retention-days: 7
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push API Gateway
+        uses: docker/build-push-action@v5
+        with:
+          context: ./
+          file: ./deployments/docker/Dockerfile.api-gateway
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/agentmsg-api-gateway:latest
+
+      - name: Build and push Message Engine
+        uses: docker/build-push-action@v5
+        with:
+          context: ./
+          file: ./deployments/docker/Dockerfile.message-engine
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/agentmsg-message-engine:latest
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - name: Deploy to Kubernetes
+        uses: azure/k8s-deploy@v4
+        with:
+          manifests: |
+            deployments/k8s/
+          images: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/agentmsg-api-gateway:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/agentmsg-message-engine:latest
+          namespace: agentmsg-staging

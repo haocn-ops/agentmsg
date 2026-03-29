@@ -1,0 +1,27 @@
+{
+  "name": "@agentmsg/sdk",
+  "version": "0.1.0",
+  "description": "AgentMsg Node.js SDK - Reliable messaging for AI Agents",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "jest"
+  },
+  "keywords": ["agentmsg", "messaging", "ai", "agents"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.16.0",
+    "axios": "^1.6.5",
+    "eventemitter3": "^5.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "@types/node": "^20.11.5",
+    "@types/ws": "^8.5.10",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.11"
+  }
+}

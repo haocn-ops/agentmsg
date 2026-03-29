@@ -1,0 +1,132 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: agentmsg-postgres
+    environment:
+      POSTGRES_USER: agentmsg
+      POSTGRES_PASSWORD: agentmsg
+      POSTGRES_DB: agentmsg
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentmsg"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: agentmsg-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api-gateway:
+    build:
+      context: ../../
+      dockerfile: deployments/docker/Dockerfile.api-gateway
+    container_name: agentmsg-api-gateway
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      DATABASE_URL: postgres://agentmsg:agentmsg@postgres:5432/agentmsg?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: dev-secret-change-in-production
+      LOG_LEVEL: debug
+      ENV: development
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  message-engine:
+    build:
+      context: ../../
+      dockerfile: deployments/docker/Dockerfile.message-engine
+    container_name: agentmsg-message-engine
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8081
+      DATABASE_URL: postgres://agentmsg:agentmsg@postgres:5432/agentmsg?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: debug
+      ENV: development
+    ports:
+      - "8081:8081"
+      - "9091:9091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: agentmsg-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: true
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+      - "4317:4317"
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: agentmsg-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    ports:
+      - "9091:9090"
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: agentmsg-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: agentmsg-network
