@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 
 	"agentmsg/internal/model"
-	"agentmsg/internal/repository"
 )
 
 func (s *MessageService) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]model.Message, error) {

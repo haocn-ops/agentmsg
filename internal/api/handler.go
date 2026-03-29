@@ -251,14 +251,6 @@ func (s *Server) sendMessage(c *gin.Context) {
 	c.JSON(http.StatusCreated, result)
 }
 
-func (s *Server) sendBatchMessages(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
-}
-
-func (s *Server) listMessages(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
-}
-
 func (s *Server) getMessage(c *gin.Context) {
 	id := uuid.MustParse(c.Param("id"))
 	msg, err := s.deps.MessageService.GetByID(c.Request.Context(), id)
@@ -288,18 +280,6 @@ func (s *Server) acknowledgeMessage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "acknowledged"})
 }
 
-func (s *Server) createSubscription(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
-}
-
-func (s *Server) listSubscriptions(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
-}
-
-func (s *Server) deleteSubscription(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
-}
-
-func (s *Server) queryCapabilities(c *gin.Context) {
+func (s *Server) getMessageStats(c *gin.Context) {
 	c.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
 }

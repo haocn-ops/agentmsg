@@ -40,7 +40,7 @@ services:
     container_name: agentmsg-api-gateway
     environment:
       HOST: 0.0.0.0
-      PORT: 8080
+      API_GATEWAY_PORT: "8080"
       DATABASE_URL: postgres://agentmsg:agentmsg@postgres:5432/agentmsg?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: dev-secret-change-in-production
@@ -55,7 +55,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -67,7 +67,7 @@ services:
     container_name: agentmsg-message-engine
     environment:
       HOST: 0.0.0.0
-      PORT: 8081
+      MESSAGE_ENGINE_PORT: "8081"
       DATABASE_URL: postgres://agentmsg:agentmsg@postgres:5432/agentmsg?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       LOG_LEVEL: debug
@@ -81,7 +81,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/health"]
       interval: 10s
       timeout: 5s
       retries: 5

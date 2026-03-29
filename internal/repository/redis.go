@@ -3,19 +3,27 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+
+	"agentmsg/internal/model"
 )
 
 type RedisClient struct {
 	client *redis.Client
 }
 
-func NewRedisClient(addr string) (*RedisClient, error) {
+func NewRedisClient(redisURL string) (*RedisClient, error) {
+	u, err := url.Parse(redisURL)
+	if err != nil {
+		return nil, err
+	}
+
 	client := redis.NewClient(&redis.Options{
-		Addr:     addr,
+		Addr:     u.Host,
 		PoolSize: 100,
 	})
 

@@ -47,7 +47,6 @@ func main() {
 
 	agentRepo := repository.NewAgentRepository(db)
 	messageRepo := repository.NewMessageRepository(db)
-	tenantRepo := repository.NewTenantRepository(db)
 
 	agentService := service.NewAgentService(agentRepo, redisClient)
 	messageService := service.NewMessageService(messageRepo, redisClient)

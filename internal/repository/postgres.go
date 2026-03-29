@@ -99,7 +99,6 @@ func (r *AgentRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Age
 	if err != nil {
 		return nil, err
 	}
-	agent.ScanRecipients()
 	return &agent, nil
 }
 
@@ -113,7 +112,6 @@ func (r *AgentRepository) GetByDID(ctx context.Context, did string) (*model.Agen
 	if err != nil {
 		return nil, err
 	}
-	agent.ScanRecipients()
 	return &agent, nil
 }
 
@@ -143,9 +141,6 @@ func (r *AgentRepository) ListByTenant(ctx context.Context, tenantID uuid.UUID) 
 	if err != nil {
 		return nil, err
 	}
-	for i := range agents {
-		agents[i].ScanRecipients()
-	}
 	return agents, nil
 }
 
@@ -169,9 +164,6 @@ func (r *AgentRepository) QueryByCapabilities(ctx context.Context, tenantID uuid
 	if err != nil {
 		return nil, err
 	}
-	for i := range agents {
-		agents[i].ScanRecipients()
-	}
 	return agents, nil
 }
 
@@ -182,9 +174,6 @@ func (r *AgentRepository) ListAll(ctx context.Context) ([]model.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i := range agents {
-		agents[i].ScanRecipients()
-	}
 	return agents, nil
 }
 
@@ -194,9 +183,6 @@ func (r *AgentRepository) GetByStatus(ctx context.Context, status model.AgentSta
 	err := r.db.SelectContext(ctx, &agents, query, status)
 	if err != nil {
 		return nil, err
-	}
-	for i := range agents {
-		agents[i].ScanRecipients()
 	}
 	return agents, nil
 }
@@ -266,17 +252,6 @@ func (r *MessageRepository) ListByTenant(ctx context.Context, tenantID uuid.UUID
 		messages[i].ScanRecipients()
 	}
 	return messages, nil
-}
-
-func (r *MessageRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Message, error) {
-	var msg model.Message
-	query := `SELECT * FROM messages WHERE id = $1`
-	err := r.db.GetContext(ctx, &msg, query, id)
-	if err != nil {
-		return nil, err
-	}
-	msg.ScanRecipients()
-	return &msg, nil
 }
 
 type AcknowledgementRepository struct {

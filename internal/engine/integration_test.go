@@ -1,4 +1,4 @@
-package integration
+package engine
 
 import (
 	"context"
@@ -7,24 +7,23 @@ import (
 
 	"github.com/google/uuid"
 
-	"agentmsg/internal/engine"
 	"agentmsg/internal/model"
 	"agentmsg/internal/repository"
 )
 
-func setupTestEngine(t *testing.T) (*engine.MessageEngine, *repository.PostgresDB, func()) {
-	cfg := &engine.EngineConfig{
+func setupTestEngine(t *testing.T) (*MessageEngine, *repository.PostgresDB, func()) {
+	cfg := &EngineConfig{
 		WorkerCount:     2,
-		BatchSize:      10,
-		FlushInterval:  100 * time.Millisecond,
-		MaxRetries:     3,
-		RetryBaseDelay: 10 * time.Millisecond,
+		BatchSize:       10,
+		FlushInterval:   100 * time.Millisecond,
+		MaxRetries:      3,
+		RetryBaseDelay:  10 * time.Millisecond,
 	}
 
 	redis := &repository.RedisClient{}
 	db := &repository.PostgresDB{}
 
-	eng := engine.NewMessageEngine(cfg, db, redis)
+	eng := NewMessageEngine(cfg, db, redis)
 
 	ctx := context.Background()
 	if err := eng.Start(ctx); err != nil {
@@ -45,17 +44,17 @@ func TestMessageEngineSendMessage(t *testing.T) {
 	ctx := context.Background()
 
 	msg := &model.Message{
-		ID:             uuid.New(),
-		ConversationID: uuid.New(),
-		MessageType:   model.MessageTypeGeneric,
-		SenderID:      uuid.New(),
-		RecipientIDs:  []uuid.UUID{uuid.New()},
-		Content:       []byte("test content"),
-		ContentSize:   12,
-		ContentType:   "text/plain",
+		ID:               uuid.New(),
+		ConversationID:   uuid.New(),
+		MessageType:      model.MessageTypeGeneric,
+		SenderID:         uuid.New(),
+		RecipientIDs:     []uuid.UUID{uuid.New()},
+		Content:          []byte("test content"),
+		ContentSize:      12,
+		ContentType:      "text/plain",
 		DeliveryGuarantee: model.DeliveryAtLeastOnce,
-		TenantID:      uuid.New(),
-		CreatedAt:    time.Now(),
+		TenantID:         uuid.New(),
+		CreatedAt:        time.Now(),
 	}
 
 	result, err := eng.SendMessage(ctx, msg)
@@ -73,7 +72,7 @@ func TestMessageEngineSendMessage(t *testing.T) {
 }
 
 func TestExactlyOnceEngine(t *testing.T) {
-	cfg := &engine.ExactlyOnceConfig{
+	cfg := &ExactlyOnceConfig{
 		DeduplicationWindow: 1 * time.Hour,
 		MaxCacheSize:       1000,
 		CleanupInterval:     1 * time.Minute,
@@ -82,7 +81,7 @@ func TestExactlyOnceEngine(t *testing.T) {
 	redis := &repository.RedisClient{}
 	db := &repository.PostgresDB{}
 
-	eng := engine.NewExactlyOnceEngine(cfg, db, redis)
+	eng := NewExactlyOnceEngine(cfg, db, redis)
 
 	ctx := context.Background()
 	if err := eng.Start(ctx); err != nil {
@@ -91,17 +90,17 @@ func TestExactlyOnceEngine(t *testing.T) {
 	defer eng.Stop()
 
 	msg := &model.Message{
-		ID:             uuid.New(),
-		ConversationID: uuid.New(),
-		MessageType:   model.MessageTypeGeneric,
-		SenderID:      uuid.New(),
-		RecipientIDs:  []uuid.UUID{uuid.New()},
-		Content:       []byte("test content"),
-		ContentSize:   12,
-		ContentType:   "text/plain",
+		ID:               uuid.New(),
+		ConversationID:   uuid.New(),
+		MessageType:      model.MessageTypeGeneric,
+		SenderID:         uuid.New(),
+		RecipientIDs:     []uuid.UUID{uuid.New()},
+		Content:          []byte("test content"),
+		ContentSize:      12,
+		ContentType:      "text/plain",
 		DeliveryGuarantee: model.DeliveryExactlyOnce,
-		TenantID:      uuid.New(),
-		CreatedAt:    time.Now(),
+		TenantID:         uuid.New(),
+		CreatedAt:        time.Now(),
 	}
 
 	duplicate, err := eng.IsDuplicate(ctx, msg)
@@ -123,7 +122,7 @@ func TestExactlyOnceEngine(t *testing.T) {
 
 func TestIdempotencyTracker(t *testing.T) {
 	redis := &repository.RedisClient{}
-	tracker := engine.NewIdempotencyTracker(redis)
+	tracker := NewIdempotencyTracker(redis)
 
 	ctx := context.Background()
 
@@ -170,17 +169,17 @@ func TestMessageRouting(t *testing.T) {
 	recipient2 := uuid.New()
 
 	msg := &model.Message{
-		ID:             uuid.New(),
-		ConversationID: uuid.New(),
-		MessageType:   model.MessageTypeTaskRequest,
-		SenderID:      uuid.New(),
-		RecipientIDs:  []uuid.UUID{recipient1, recipient2},
-		Content:       []byte("routing test"),
-		ContentSize:   13,
-		ContentType:   "text/plain",
+		ID:               uuid.New(),
+		ConversationID:   uuid.New(),
+		MessageType:      model.MessageTypeTaskRequest,
+		SenderID:         uuid.New(),
+		RecipientIDs:     []uuid.UUID{recipient1, recipient2},
+		Content:          []byte("routing test"),
+		ContentSize:      13,
+		ContentType:      "text/plain",
 		DeliveryGuarantee: model.DeliveryAtLeastOnce,
-		TenantID:      uuid.New(),
-		CreatedAt:    time.Now(),
+		TenantID:         uuid.New(),
+		CreatedAt:        time.Now(),
 	}
 
 	_, err := eng.SendMessage(ctx, msg)
@@ -192,18 +191,18 @@ func TestMessageRouting(t *testing.T) {
 }
 
 func TestDeadLetterQueue(t *testing.T) {
-	cfg := &engine.EngineConfig{
+	cfg := &EngineConfig{
 		WorkerCount:     1,
-		BatchSize:      10,
-		FlushInterval:  100 * time.Millisecond,
-		MaxRetries:     2,
-		RetryBaseDelay: 10 * time.Millisecond,
+		BatchSize:       10,
+		FlushInterval:   100 * time.Millisecond,
+		MaxRetries:      2,
+		RetryBaseDelay:  10 * time.Millisecond,
 	}
 
 	redis := &repository.RedisClient{}
 	db := &repository.PostgresDB{}
 
-	eng := engine.NewMessageEngine(cfg, db, redis)
+	eng := NewMessageEngine(cfg, db, redis)
 
 	ctx := context.Background()
 	if err := eng.Start(ctx); err != nil {
@@ -212,17 +211,17 @@ func TestDeadLetterQueue(t *testing.T) {
 	defer eng.Stop()
 
 	msg := &model.Message{
-		ID:             uuid.New(),
-		ConversationID: uuid.New(),
-		MessageType:   model.MessageTypeGeneric,
-		SenderID:      uuid.New(),
-		RecipientIDs:  []uuid.UUID{uuid.New()},
-		Content:       []byte("dlq test"),
-		ContentSize:   8,
-		ContentType:   "text/plain",
+		ID:               uuid.New(),
+		ConversationID:   uuid.New(),
+		MessageType:      model.MessageTypeGeneric,
+		SenderID:         uuid.New(),
+		RecipientIDs:     []uuid.UUID{uuid.New()},
+		Content:          []byte("dlq test"),
+		ContentSize:      8,
+		ContentType:      "text/plain",
 		DeliveryGuarantee: model.DeliveryAtLeastOnce,
-		TenantID:      uuid.New(),
-		CreatedAt:    time.Now(),
+		TenantID:         uuid.New(),
+		CreatedAt:        time.Now(),
 	}
 
 	_, err := eng.SendMessage(ctx, msg)

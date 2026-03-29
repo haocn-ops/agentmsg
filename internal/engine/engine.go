@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 
 	"agentmsg/internal/model"
 	"agentmsg/internal/repository"
@@ -221,5 +222,5 @@ func (q *DeadLetterQueue) Enqueue(ctx context.Context, msg *model.Message, reaso
 		"reason":  reason,
 		"time":    time.Now(),
 	})
-	return q.redis.ZAdd(ctx, "dlq:pending", data)
+	return q.redis.ZAdd(ctx, "dlq:pending", redis.Z{Score: float64(time.Now().Unix()), Member: string(data)})
 }

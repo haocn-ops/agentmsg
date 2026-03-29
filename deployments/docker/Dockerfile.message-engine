@@ -4,12 +4,15 @@ WORKDIR /app
 
 RUN apk add --no-cache git ca-certificates
 
+ENV GO111MODULE=on
+
 COPY go.mod go.sum* ./
 RUN go mod download
 
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -mod=mod \
     -ldflags="-w -s" \
     -o /app/message-engine \
     ./cmd/message-engine
@@ -21,9 +24,7 @@ RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 
 COPY --from=builder /app/message-engine /app/message-engine
-COPY --from=builder /app/.env.example /app/.env
 
 EXPOSE 8081 9091
 
 ENTRYPOINT ["/app/message-engine"]
-CMD ["--config", "/app/.env"]
