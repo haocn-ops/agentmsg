@@ -156,6 +156,9 @@ jobs:
       - name: Verify release artifacts
         run: |
           make release-check
+          chmod +x ./scripts/check-version-tooling.sh ./scripts/generate-release-notes.sh
+          ./scripts/check-version-tooling.sh
+          ./scripts/generate-release-notes.sh > /tmp/agentmsg-release-notes.md
 
   build:
     name: Build

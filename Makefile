@@ -1,7 +1,7 @@
 # Build and Development
 ###########################
 
-.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke openapi k8s-deploy-staging k8s-deploy-production test-sdk-go test-sdk-python test-sdk-nodejs release-check package-sdk-nodejs package-sdk-python build-release-artifacts
+.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke openapi k8s-deploy-staging k8s-deploy-production test-sdk-go test-sdk-python test-sdk-nodejs release-check package-sdk-nodejs package-sdk-python build-release-artifacts bump-version release-notes version-tooling-check
 
 # Go parameters
 GOCMD=go
@@ -24,6 +24,8 @@ CMD_DIR=./cmd
 DOCKER_IMAGE=agentmsg
 DOCKER_TAG=latest
 DOCKER_REGISTRY=docker.io
+VERSION_FILE=VERSION
+CURRENT_VERSION=$(shell tr -d '\n' < $(VERSION_FILE))
 
 # Help
 help:
@@ -52,6 +54,9 @@ help:
 	@echo "  make package-sdk-nodejs Build the Node.js SDK tarball locally"
 	@echo "  make package-sdk-python Build Python SDK sdist and wheel locally"
 	@echo "  make build-release-artifacts Build release-ready SDK artifacts into dist/release"
+	@echo "  make bump-version NEW_VERSION=x.y.z Sync all versioned SDK files"
+	@echo "  make release-notes Generate release notes from git history"
+	@echo "  make version-tooling-check Validate bump-version and release notes tooling"
 	@echo "  make clean         Clean build artifacts"
 
 # Install dependencies
@@ -112,6 +117,16 @@ package-sdk-python:
 
 build-release-artifacts:
 	bash ./scripts/build-release-artifacts.sh
+
+bump-version:
+	@test -n "$(NEW_VERSION)" || (echo "usage: make bump-version NEW_VERSION=x.y.z" && exit 1)
+	bash ./scripts/bump-version.sh "$(NEW_VERSION)"
+
+release-notes:
+	bash ./scripts/generate-release-notes.sh
+
+version-tooling-check:
+	bash ./scripts/check-version-tooling.sh
 
 # Run linter
 lint:
@@ -204,6 +219,6 @@ version:
 
 # Release
 release: test lint build-prod docker-build
-	@echo "Creating release..."
-	git tag -a v$(VERSION) -m "Release v$(VERSION)"
-	git push origin v$(VERSION)
+	@echo "Creating release for $(CURRENT_VERSION)..."
+	git tag -a v$(CURRENT_VERSION) -m "Release v$(CURRENT_VERSION)"
+	git push origin v$(CURRENT_VERSION)
