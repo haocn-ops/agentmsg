@@ -32,7 +32,9 @@ type ServerConfig struct {
 type Dependencies struct {
 	AgentService   *service.AgentService
 	MessageService *service.MessageService
-	AuthService   *service.AuthService
+	AuthService    *service.AuthService
+	Database       interface{ Ping(context.Context) error }
+	Redis          interface{ Ping(context.Context) error }
 	Middleware     *middleware.Middleware
 }
 
@@ -63,7 +65,7 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	v1 := r.Group("/api/v1")
-	v1.Use(s.deps.Middleware.Authenticate())
+	v1.Use(s.deps.Middleware.Authenticate(), s.deps.Middleware.RateLimit())
 	{
 		agents := v1.Group("/agents")
 		{
@@ -111,7 +113,36 @@ func (s *Server) healthCheck(c *gin.Context) {
 }
 
 func (s *Server) readinessCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ready"})
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	defer cancel()
+
+	checks := gin.H{}
+
+	if s.deps.Database == nil {
+		checks["database"] = "unconfigured"
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "checks": checks})
+		return
+	}
+	if err := s.deps.Database.Ping(ctx); err != nil {
+		checks["database"] = err.Error()
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "checks": checks})
+		return
+	}
+	checks["database"] = "ok"
+
+	if s.deps.Redis == nil {
+		checks["redis"] = "unconfigured"
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "checks": checks})
+		return
+	}
+	if err := s.deps.Redis.Ping(ctx); err != nil {
+		checks["redis"] = err.Error()
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "checks": checks})
+		return
+	}
+	checks["redis"] = "ok"
+
+	c.JSON(http.StatusOK, gin.H{"status": "ready", "checks": checks})
 }
 
 type AgentRequest struct {
@@ -306,27 +337,57 @@ func (s *Server) getMessage(c *gin.Context) {
 func (s *Server) acknowledgeMessage(c *gin.Context) {
 	id := uuid.MustParse(c.Param("id"))
 	var req struct {
-		Status string `json:"status"`
+		Status    string `json:"status"`
+		Details   string `json:"details"`
+		Nonce     string `json:"nonce"`
+		Signature string `json:"signature"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	status := model.MessageStatus(req.Status)
-	if status == "" {
+	ackStatus := model.AckStatus(req.Status)
+	if ackStatus == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "status is required"})
 		return
 	}
 
-	if err := s.deps.MessageService.Acknowledge(c.Request.Context(), id, model.MessageStatus(status)); err != nil {
+	ack := &model.Acknowledgement{
+		MessageID: id,
+		AgentID:   uuid.MustParse(c.GetString("agent_id")),
+		Status:    ackStatus,
+		Details:   req.Details,
+		Nonce:     req.Nonce,
+		Signature: req.Signature,
+	}
+
+	if err := s.deps.MessageService.Acknowledge(c.Request.Context(), ack); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "acknowledged"})
+	c.JSON(http.StatusOK, gin.H{
+		"status":        "acknowledged",
+		"ackStatus":     ack.Status,
+		"messageStatus": serviceMessageStatusForAck(ack.Status),
+		"nonce":         ack.Nonce,
+	})
 }
 
 func (s *Server) getMessageStats(c *gin.Context) {
 	c.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
+}
+
+func serviceMessageStatusForAck(status model.AckStatus) model.MessageStatus {
+	switch status {
+	case model.AckStatusReceived:
+		return model.MessageStatusDelivered
+	case model.AckStatusProcessed:
+		return model.MessageStatusProcessed
+	case model.AckStatusRejected, model.AckStatusFailed:
+		return model.MessageStatusFailed
+	default:
+		return model.MessageStatusPending
+	}
 }

@@ -40,6 +40,13 @@ func (r *RedisClient) Client() *redis.Client {
 	return r.client
 }
 
+func (r *RedisClient) Ping(ctx context.Context) error {
+	if r == nil || r.client == nil {
+		return redis.ErrClosed
+	}
+	return r.client.Ping(ctx).Err()
+}
+
 func (r *RedisClient) Publish(ctx context.Context, channel string, message interface{}) error {
 	return r.client.Publish(ctx, channel, message).Err()
 }

@@ -47,9 +47,10 @@ func main() {
 
 	agentRepo := repository.NewAgentRepository(db)
 	messageRepo := repository.NewMessageRepository(db)
+	ackRepo := repository.NewAcknowledgementRepository(db)
 
 	agentService := service.NewAgentService(agentRepo, redisClient)
-	messageService := service.NewMessageService(messageRepo, redisClient)
+	messageService := service.NewMessageService(messageRepo, ackRepo, redisClient)
 	authService := service.NewAuthService(cfg.JWTSecret)
 
 	server := api.NewServer(&api.ServerConfig{
@@ -60,8 +61,10 @@ func main() {
 	}, &api.Dependencies{
 		AgentService:   agentService,
 		MessageService: messageService,
-		AuthService:   authService,
-		Middleware:     middleware.NewMiddleware(redisClient, authService),
+		AuthService:    authService,
+		Database:       db,
+		Redis:          redisClient,
+		Middleware:     middleware.NewMiddleware(redisClient, authService, cfg.RateLimitRequests, cfg.RateLimitWindow),
 	})
 
 	go func() {

@@ -115,14 +115,16 @@ func (s *AgentService) UpdateCapabilities(ctx context.Context, id uuid.UUID, cap
 }
 
 type MessageService struct {
-	repo  *repository.MessageRepository
-	redis *repository.RedisClient
+	repo    *repository.MessageRepository
+	ackRepo *repository.AcknowledgementRepository
+	redis   *repository.RedisClient
 }
 
-func NewMessageService(repo *repository.MessageRepository, redis *repository.RedisClient) *MessageService {
+func NewMessageService(repo *repository.MessageRepository, ackRepo *repository.AcknowledgementRepository, redis *repository.RedisClient) *MessageService {
 	return &MessageService{
-		repo:  repo,
-		redis: redis,
+		repo:    repo,
+		ackRepo: ackRepo,
+		redis:   redis,
 	}
 }
 
@@ -184,11 +186,40 @@ func (s *MessageService) GetByID(ctx context.Context, id uuid.UUID) (*model.Mess
 	return s.repo.GetByID(ctx, id)
 }
 
-func (s *MessageService) Acknowledge(ctx context.Context, id uuid.UUID, status model.MessageStatus) error {
-	if s == nil || s.repo == nil {
+func (s *MessageService) Acknowledge(ctx context.Context, ack *model.Acknowledgement) error {
+	if s == nil || s.repo == nil || s.ackRepo == nil {
 		return ErrServiceUnavailable
 	}
-	return s.repo.UpdateStatus(ctx, id, status)
+	if ack == nil {
+		return ErrInvalidMessage
+	}
+	if ack.MessageID == uuid.Nil || ack.AgentID == uuid.Nil || ack.Status == "" {
+		return ErrInvalidMessage
+	}
+
+	msg, err := s.repo.GetByID(ctx, ack.MessageID)
+	if err != nil {
+		return err
+	}
+	if msg == nil {
+		return ErrInvalidMessage
+	}
+
+	if ack.ID == uuid.Nil {
+		ack.ID = uuid.New()
+	}
+	if ack.CreatedAt.IsZero() {
+		ack.CreatedAt = time.Now()
+	}
+	if ack.Nonce == "" {
+		ack.Nonce = uuid.NewString()
+	}
+
+	if err := s.ackRepo.Create(ctx, ack); err != nil {
+		return err
+	}
+
+	return s.repo.UpdateStatus(ctx, ack.MessageID, mapAckToMessageStatus(ack.Status))
 }
 
 func (s *MessageService) ListByConversation(ctx context.Context, conversationID uuid.UUID, limit int) ([]model.Message, error) {
@@ -282,4 +313,17 @@ func (s *AuthService) ValidateToken(token string) (*model.TokenClaims, error) {
 		AgentID:  agentID,
 		TenantID: tenantID,
 	}, nil
+}
+
+func mapAckToMessageStatus(status model.AckStatus) model.MessageStatus {
+	switch status {
+	case model.AckStatusReceived:
+		return model.MessageStatusDelivered
+	case model.AckStatusProcessed:
+		return model.MessageStatusProcessed
+	case model.AckStatusRejected, model.AckStatusFailed:
+		return model.MessageStatusFailed
+	default:
+		return model.MessageStatusPending
+	}
 }

@@ -47,10 +47,13 @@ func TestMessageServiceAcknowledge(t *testing.T) {
 
 	svc := &MessageService{}
 
-	msgID := uuid.New()
-	status := model.MessageStatusProcessed
+	ack := &model.Acknowledgement{
+		MessageID: uuid.New(),
+		AgentID:   uuid.New(),
+		Status:    model.AckStatusProcessed,
+	}
 
-	err := svc.Acknowledge(ctx, msgID, status)
+	err := svc.Acknowledge(ctx, ack)
 	assert.ErrorIs(t, err, ErrServiceUnavailable)
 }
 

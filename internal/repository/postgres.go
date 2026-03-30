@@ -133,6 +133,13 @@ func (p *PostgresDB) DB() *sqlx.DB {
 	return p.db
 }
 
+func (p *PostgresDB) Ping(ctx context.Context) error {
+	if p == nil || p.db == nil {
+		return sql.ErrConnDone
+	}
+	return p.db.PingContext(ctx)
+}
+
 type AgentRepository struct {
 	db *sqlx.DB
 }
