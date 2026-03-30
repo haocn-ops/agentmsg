@@ -100,6 +100,7 @@ SDK notes:
 - Realtime WebSocket hooks are still experimental client-side code because the current server build does not expose `/api/v1/ws`.
 - Capability updates assume the authenticated agent already exists on the server.
 - Release baseline checks are available through `make release-check`.
+- Tag pushes like `v0.1.0` build GitHub release artifacts for the Node.js and Python SDKs.
 
 ### Go
 

@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '20'
+
+jobs:
+  release:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: sdk/nodejs/package-lock.json
+
+      - name: Install Node.js SDK dependencies
+        run: |
+          cd sdk/nodejs
+          npm ci
+
+      - name: Verify tag matches VERSION
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          expected_tag="v$(cat VERSION)"
+          actual_tag="${GITHUB_REF#refs/tags/}"
+          if [ "$expected_tag" != "$actual_tag" ]; then
+            echo "tag/version mismatch: expected $expected_tag but got $actual_tag" >&2
+            exit 1
+          fi
+
+      - name: Build release artifacts
+        run: |
+          chmod +x ./scripts/check-release-artifacts.sh ./scripts/build-release-artifacts.sh
+          ./scripts/build-release-artifacts.sh ./dist/release
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/release/*
+          retention-days: 30
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/release/*
+          generate_release_notes: true
