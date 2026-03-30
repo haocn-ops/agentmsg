@@ -118,7 +118,7 @@ package-sdk-nodejs:
 	cd sdk/nodejs && npm pack
 
 package-sdk-python:
-	cd sdk/python && rm -rf build dist ./*.egg-info && python3 setup.py sdist --dist-dir dist && rm -rf build ./*.egg-info && python3 setup.py bdist_wheel --dist-dir dist
+	bash ./scripts/build-python-sdk.sh sdk/python/dist
 
 build-release-artifacts:
 	bash ./scripts/build-release-artifacts.sh

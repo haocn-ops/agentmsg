@@ -12,9 +12,8 @@ This SDK targets the currently implemented HTTP API.
 ## Release checks
 
 ```bash
+python3 -m pip install build
 rm -rf build dist ./*.egg-info
-python3 setup.py sdist --dist-dir dist
-rm -rf build ./*.egg-info
-python3 setup.py bdist_wheel --dist-dir dist
+python3 -m build --sdist --wheel --outdir dist --no-isolation
 python3 -m unittest discover -s tests
 ```

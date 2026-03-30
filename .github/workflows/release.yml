@@ -27,6 +27,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Install Python release tooling
+        run: |
+          python3 -m pip install build
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -58,7 +62,7 @@ jobs:
 
       - name: Build release artifacts
         run: |
-          chmod +x ./scripts/check-release-artifacts.sh ./scripts/build-release-artifacts.sh ./scripts/generate-release-notes.sh
+          chmod +x ./scripts/check-release-artifacts.sh ./scripts/build-python-sdk.sh ./scripts/build-release-artifacts.sh ./scripts/generate-release-notes.sh
           ./scripts/build-release-artifacts.sh ./dist/release
 
       - name: Generate release notes

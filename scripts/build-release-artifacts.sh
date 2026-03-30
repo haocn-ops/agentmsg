@@ -21,11 +21,7 @@ mkdir -p "$output_dir"
 )
 
 (
-  cd "$repo_root/sdk/python"
-  rm -rf build dist ./*.egg-info
-  python3 setup.py -q sdist --dist-dir "$output_dir" >/dev/null
-  rm -rf build dist ./*.egg-info
-  python3 setup.py -q bdist_wheel --dist-dir "$output_dir" >/dev/null
+  "$repo_root/scripts/build-python-sdk.sh" "$output_dir"
 )
 
 tar -C "$repo_root/sdk/go" -czf "$output_dir/agentmsg-go-sdk-$(tr -d '\n' < "$repo_root/VERSION").tar.gz" agentmsg

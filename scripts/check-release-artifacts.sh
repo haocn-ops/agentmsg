@@ -47,10 +47,7 @@ go_path="${AGENTMSG_GO_GOPATH:-/tmp/agentmsg-go-sdk-path}"
 
 (
   cd "$repo_root/sdk/python"
-  rm -rf build dist ./*.egg-info
-  python3 setup.py -q sdist --dist-dir "$tmp_dir/python-dist" >/dev/null
-  rm -rf build dist ./*.egg-info
-  python3 setup.py -q bdist_wheel --dist-dir "$tmp_dir/python-dist" >/dev/null
+  "$repo_root/scripts/build-python-sdk.sh" "$tmp_dir/python-dist"
 )
 
 (
