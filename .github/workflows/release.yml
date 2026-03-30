@@ -69,6 +69,10 @@ jobs:
         run: |
           ./scripts/generate-release-notes.sh > ./dist/release-notes.md
 
+      - name: Generate checksums
+        run: |
+          shasum -a 256 dist/release/* > ./dist/release/SHA256SUMS
+
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -84,3 +88,59 @@ jobs:
         with:
           files: dist/release/*
           body_path: dist/release-notes.md
+
+  publish-node:
+    name: Publish Node SDK
+    runs-on: ubuntu-latest
+    needs: [release]
+    if: startsWith(github.ref, 'refs/tags/v') && secrets.NPM_TOKEN != ''
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/release
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish package to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish dist/release/agentmsg-sdk-*.tgz --access public
+
+  publish-python:
+    name: Publish Python SDK
+    runs-on: ubuntu-latest
+    needs: [release]
+    if: startsWith(github.ref, 'refs/tags/v') && secrets.PYPI_API_TOKEN != ''
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/release
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install publish tooling
+        run: |
+          python3 -m pip install twine
+
+      - name: Validate Python distribution metadata
+        run: |
+          python3 -m twine check dist/release/agentmsg-*.tar.gz dist/release/agentmsg-*.whl
+
+      - name: Publish package to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          python3 -m twine upload --non-interactive dist/release/agentmsg-*.tar.gz dist/release/agentmsg-*.whl

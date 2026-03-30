@@ -102,6 +102,7 @@ SDK notes:
 - Release baseline checks are available through `make release-check`.
 - Tag pushes like `vX.Y.Z` and `sdk/go/agentmsg/vX.Y.Z` build GitHub release artifacts for the SDKs.
 - Go SDK module releases should also publish the prefixed tag `sdk/go/agentmsg/vX.Y.Z`.
+- Root release tags publish the Node and Python SDKs automatically when `NPM_TOKEN` and `PYPI_API_TOKEN` are configured.
 - Version upgrades can be synchronized with `make bump-version NEW_VERSION=X.Y.Z`.
 - Release notes can be previewed locally with `make release-notes`.
 

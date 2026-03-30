@@ -39,8 +39,11 @@ For GitHub Actions based deployments, configure these environment secrets:
 - `PRODUCTION_KUBECONFIG`: raw kubeconfig content for the production cluster
 - `PRODUCTION_KUBECONFIG_CONTEXT`: optional production kubeconfig context override
 - `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`: registry credentials for the published runtime images
+- `NPM_TOKEN`: npm access token for publishing `@agentmsg/sdk`
+- `PYPI_API_TOKEN`: PyPI API token for publishing `agentmsg`
 
 The CI workflow publishes both `latest` and commit-SHA image tags. Staging and production deploys render the appropriate overlay and pin workloads to the commit SHA so every rollout is traceable and rollback-friendly.
+The release workflow always builds GitHub release assets and checksum files. On root tags like `v0.1.0`, it also publishes the Node.js and Python SDKs when the registry secrets are configured.
 
 If you use the bundled `allow-api-gateway-ingress` policy, label the ingress controller namespace with:
 
