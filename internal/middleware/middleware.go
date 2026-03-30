@@ -9,6 +9,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 
 	"agentmsg/internal/model"
 	"agentmsg/internal/observability"
@@ -17,11 +21,11 @@ import (
 )
 
 type Middleware struct {
-	redis              *repository.RedisClient
-	db                 *repository.PostgresDB
-	auth               *service.AuthService
-	rateLimitRequests  int
-	rateLimitWindow    time.Duration
+	redis             *repository.RedisClient
+	db                *repository.PostgresDB
+	auth              *service.AuthService
+	rateLimitRequests int
+	rateLimitWindow   time.Duration
 }
 
 func NewMiddleware(redis *repository.RedisClient, db *repository.PostgresDB, auth *service.AuthService, rateLimitRequests int, rateLimitWindow time.Duration) *Middleware {
@@ -53,12 +57,40 @@ func (m *Middleware) Tracing() gin.HandlerFunc {
 			traceID = requestID
 		}
 
+		parentCtx := otel.GetTextMapPropagator().Extract(c.Request.Context(), propagation.HeaderCarrier(c.Request.Header))
+		path := c.FullPath()
+		if path == "" {
+			path = c.Request.URL.Path
+		}
+
+		ctx, span := otel.Tracer("agentmsg/http").Start(parentCtx, c.Request.Method+" "+path)
+		span.SetAttributes(
+			attribute.String("request.id", requestID),
+			attribute.String("trace.id", traceID),
+			attribute.String("http.method", c.Request.Method),
+			attribute.String("http.route", path),
+		)
+
 		c.Set("request_id", requestID)
 		c.Set("trace_id", traceID)
+		c.Set("otel_trace_id", span.SpanContext().TraceID().String())
 		c.Writer.Header().Set("X-Request-ID", requestID)
 		c.Writer.Header().Set("X-Trace-ID", traceID)
+		c.Request = c.Request.WithContext(ctx)
 
 		c.Next()
+
+		statusCode := c.Writer.Status()
+		span.SetAttributes(attribute.Int("http.status_code", statusCode))
+		if statusCode >= 500 {
+			span.SetStatus(codes.Error, http.StatusText(statusCode))
+		} else {
+			span.SetStatus(codes.Ok, http.StatusText(statusCode))
+		}
+		if len(c.Errors) > 0 {
+			span.RecordError(c.Errors.Last())
+		}
+		span.End()
 	}
 }
 

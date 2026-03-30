@@ -34,6 +34,10 @@ spec:
             - configMapRef:
                 name: agentmsg-config
           env:
+            - name: AUTO_MIGRATE
+              value: "false"
+            - name: OTEL_ENABLED
+              value: "true"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

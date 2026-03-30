@@ -13,6 +13,7 @@ AgentMsg is a messaging platform designed specifically for AI Agent communicatio
 - **Task Coordination**: Send task requests and receive responses
 - **Real-time Communication**: WebSocket-based push messaging
 - **Multi-language SDKs**: Python, Node.js, Go, and more
+- **Operational Readiness**: Readiness probes, Prometheus metrics, audit logs, rate limiting, DLQ retries, and OpenTelemetry tracing
 
 ## Quick Start
 
@@ -33,21 +34,24 @@ cd agentmsg
 # Install dependencies
 make deps
 
-# Run database migrations
+# Run embedded database migrations
 make migrate
 
 # Start the services
 make run
+
+# Verify health, readiness, and metrics endpoints
+make smoke
 ```
 
 ### Using Docker
 
 ```bash
 # Start all services
-docker-compose -f deployments/docker/docker-compose.yml up -d
+docker compose -f deployments/docker/docker-compose.yml up -d
 
 # View logs
-docker-compose -f deployments/docker/docker-compose.yml logs -f
+docker compose -f deployments/docker/docker-compose.yml logs -f
 ```
 
 ## SDKs
@@ -212,8 +216,27 @@ Environment variables:
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | - |
 | `REDIS_URL` | Redis connection string | - |
-| `API_KEY` | API authentication key | - |
+| `JWT_SECRET` | HMAC secret for agent JWTs | `dev-secret` |
+| `AUTO_MIGRATE` | Run embedded SQL migrations on startup | `false` |
+| `OTEL_ENABLED` | Enable OpenTelemetry tracing export | `false` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP HTTP collector endpoint | - |
+| `OTEL_INSECURE` | Disable TLS for OTLP exporter | `true` |
+| `RATE_LIMIT_REQUESTS` | Redis-backed request budget per window | `600` |
+| `RATE_LIMIT_WINDOW_SECONDS` | Rate limit window size in seconds | `60` |
 | `LOG_LEVEL` | Logging level | `info` |
+| `ENV` | Deployment environment label | `development` |
+
+Operational endpoints:
+
+| Service | Endpoint | Purpose |
+|---------|----------|---------|
+| API Gateway | `:8080/health` | Liveness probe |
+| API Gateway | `:8080/ready` | PostgreSQL and Redis readiness |
+| API Gateway | `:8080/metrics` | In-band Prometheus metrics |
+| API Gateway | `:9090/metrics` | Dedicated metrics server |
+| Message Engine | `:8081/health` | Liveness probe |
+| Message Engine | `:8081/ready` | PostgreSQL and Redis readiness |
+| Message Engine | `:9091/metrics` | Dedicated metrics server |
 
 ## Development
 
@@ -221,8 +244,8 @@ Environment variables:
 # Run tests
 make test
 
-# Run with hot reload
-make dev
+# Run startup smoke checks
+make smoke
 
 # Build binaries
 make build

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 
 	"agentmsg/internal/model"
 	"agentmsg/internal/observability"
@@ -26,8 +28,8 @@ var (
 )
 
 type AgentService struct {
-	repo   *repository.AgentRepository
-	redis  *repository.RedisClient
+	repo  *repository.AgentRepository
+	redis *repository.RedisClient
 }
 
 func NewAgentService(repo *repository.AgentRepository, redis *repository.RedisClient) *AgentService {
@@ -130,12 +132,16 @@ func NewMessageService(repo *repository.MessageRepository, ackRepo *repository.A
 
 func (s *MessageService) Send(ctx context.Context, msg *model.Message) (*model.SendResult, error) {
 	start := time.Now()
+	ctx, span := otel.Tracer("agentmsg/service").Start(ctx, "message.send")
+	defer span.End()
 	if s == nil || s.repo == nil || s.redis == nil {
 		observability.RecordMessageOperation("send", "service_unavailable", time.Since(start))
+		span.SetAttributes(attribute.String("message.outcome", "service_unavailable"))
 		return nil, ErrServiceUnavailable
 	}
 	if msg == nil || len(msg.RecipientIDs) == 0 || len(msg.Content) == 0 {
 		observability.RecordMessageOperation("send", "invalid_message", time.Since(start))
+		span.SetAttributes(attribute.String("message.outcome", "invalid_message"))
 		return nil, ErrInvalidMessage
 	}
 
@@ -161,26 +167,36 @@ func (s *MessageService) Send(ctx context.Context, msg *model.Message) (*model.S
 
 	if err := msg.SetRecipients(); err != nil {
 		observability.RecordMessageOperation("send", "recipient_encode_error", time.Since(start))
+		span.RecordError(err)
 		return nil, err
 	}
 
 	if err := s.repo.Create(ctx, msg); err != nil {
 		observability.RecordMessageOperation("send", "db_error", time.Since(start))
+		span.RecordError(err)
 		return nil, err
 	}
 
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		observability.RecordMessageOperation("send", "marshal_error", time.Since(start))
+		span.RecordError(err)
 		return nil, err
 	}
 
 	if err := s.redis.LPush(ctx, "message:pending", string(payload)); err != nil {
 		observability.RecordMessageOperation("send", "queue_error", time.Since(start))
+		span.RecordError(err)
 		return nil, err
 	}
 
 	observability.RecordMessageOperation("send", "queued", time.Since(start))
+	span.SetAttributes(
+		attribute.String("message.id", msg.ID.String()),
+		attribute.String("message.trace_id", msg.TraceID),
+		attribute.Int("message.recipient_count", len(msg.RecipientIDs)),
+		attribute.String("message.outcome", "queued"),
+	)
 
 	return &model.SendResult{
 		MessageID: msg.ID,
@@ -197,26 +213,33 @@ func (s *MessageService) GetByID(ctx context.Context, id uuid.UUID) (*model.Mess
 
 func (s *MessageService) Acknowledge(ctx context.Context, ack *model.Acknowledgement) error {
 	start := time.Now()
+	ctx, span := otel.Tracer("agentmsg/service").Start(ctx, "message.acknowledge")
+	defer span.End()
 	if s == nil || s.repo == nil || s.ackRepo == nil {
 		observability.RecordMessageOperation("ack", "service_unavailable", time.Since(start))
+		span.SetAttributes(attribute.String("ack.outcome", "service_unavailable"))
 		return ErrServiceUnavailable
 	}
 	if ack == nil {
 		observability.RecordMessageOperation("ack", "invalid_message", time.Since(start))
+		span.SetAttributes(attribute.String("ack.outcome", "invalid_message"))
 		return ErrInvalidMessage
 	}
 	if ack.MessageID == uuid.Nil || ack.AgentID == uuid.Nil || ack.Status == "" {
 		observability.RecordMessageOperation("ack", "invalid_message", time.Since(start))
+		span.SetAttributes(attribute.String("ack.outcome", "invalid_message"))
 		return ErrInvalidMessage
 	}
 
 	msg, err := s.repo.GetByID(ctx, ack.MessageID)
 	if err != nil {
 		observability.RecordMessageOperation("ack", "lookup_error", time.Since(start))
+		span.RecordError(err)
 		return err
 	}
 	if msg == nil {
 		observability.RecordMessageOperation("ack", "message_not_found", time.Since(start))
+		span.SetAttributes(attribute.String("ack.outcome", "message_not_found"))
 		return ErrInvalidMessage
 	}
 
@@ -232,15 +255,22 @@ func (s *MessageService) Acknowledge(ctx context.Context, ack *model.Acknowledge
 
 	if err := s.ackRepo.Create(ctx, ack); err != nil {
 		observability.RecordMessageOperation("ack", "persist_error", time.Since(start))
+		span.RecordError(err)
 		return err
 	}
 
 	if err := s.repo.UpdateStatus(ctx, ack.MessageID, mapAckToMessageStatus(ack.Status)); err != nil {
 		observability.RecordMessageOperation("ack", "status_update_error", time.Since(start))
+		span.RecordError(err)
 		return err
 	}
 
 	observability.RecordMessageOperation("ack", string(ack.Status), time.Since(start))
+	span.SetAttributes(
+		attribute.String("message.id", ack.MessageID.String()),
+		attribute.String("ack.status", string(ack.Status)),
+		attribute.String("ack.outcome", string(ack.Status)),
+	)
 	return nil
 }
 
@@ -261,11 +291,11 @@ type jwtHeader struct {
 }
 
 type jwtClaims struct {
-	Sub      string `json:"sub"`
-	AgentID  string `json:"agent_id"`
-	TenantID string `json:"tenant_id"`
-	IssuedAt int64  `json:"iat"`
-	ExpiresAt int64 `json:"exp"`
+	Sub       string `json:"sub"`
+	AgentID   string `json:"agent_id"`
+	TenantID  string `json:"tenant_id"`
+	IssuedAt  int64  `json:"iat"`
+	ExpiresAt int64  `json:"exp"`
 }
 
 func NewAuthService(jwtSecret string) *AuthService {

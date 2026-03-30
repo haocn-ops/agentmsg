@@ -34,6 +34,10 @@ spec:
             - configMapRef:
                 name: agentmsg-config
           env:
+            - name: AUTO_MIGRATE
+              value: "true"
+            - name: OTEL_ENABLED
+              value: "true"
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:

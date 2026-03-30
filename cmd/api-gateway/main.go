@@ -15,6 +15,7 @@ import (
 	"agentmsg/internal/api"
 	"agentmsg/internal/config"
 	"agentmsg/internal/middleware"
+	"agentmsg/internal/observability"
 	"agentmsg/internal/repository"
 	"agentmsg/internal/service"
 )
@@ -38,12 +39,38 @@ func main() {
 	}
 	defer db.Close()
 
+	if cfg.AutoMigrate {
+		if err := repository.RunMigrations(context.Background(), db); err != nil {
+			logger.Error("Failed to run migrations", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	redisClient, err := repository.NewRedisClient(cfg.RedisURL)
 	if err != nil {
 		logger.Error("Failed to connect to Redis", "error", err)
 		os.Exit(1)
 	}
 	defer redisClient.Close()
+
+	traceShutdown, err := observability.InitTracing(context.Background(), observability.TraceConfig{
+		ServiceName: "agentmsg-api-gateway",
+		Environment: cfg.Env,
+		Enabled:     cfg.OTELEnabled,
+		Endpoint:    cfg.OTELExporterOTLPEndpoint,
+		Insecure:    cfg.OTELInsecure,
+	})
+	if err != nil {
+		logger.Error("Failed to initialize tracing", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(ctx); err != nil {
+			logger.Error("Failed to shutdown tracing", "error", err)
+		}
+	}()
 
 	agentRepo := repository.NewAgentRepository(db)
 	messageRepo := repository.NewMessageRepository(db)
@@ -76,9 +103,10 @@ func main() {
 	}()
 
 	go func() {
-		http.Handle("/metrics", promhttp.Handler())
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", promhttp.Handler())
 		logger.Info("Starting metrics server", "port", "9090")
-		if err := http.ListenAndServe(":9090", nil); err != nil {
+		if err := http.ListenAndServe(":9090", metricsMux); err != nil {
 			logger.Error("Metrics server error", "error", err)
 		}
 	}()

@@ -1,7 +1,7 @@
 # Build and Development
 ###########################
 
-.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down
+.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke
 
 # Go parameters
 GOCMD=go
@@ -41,6 +41,7 @@ help:
 	@echo "  make docker-up     Start Docker Compose"
 	@echo "  make docker-down   Stop Docker Compose"
 	@echo "  make migrate       Run database migrations"
+	@echo "  make smoke         Run local startup smoke checks"
 	@echo "  make clean         Clean build artifacts"
 
 # Install dependencies
@@ -75,6 +76,9 @@ test-coverage:
 	$(GOTEST) -v -race -coverprofile=coverage.out ./...
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 
+smoke:
+	./scripts/smoke.sh
+
 # Run linter
 lint:
 	@echo "Running linter..."
@@ -93,27 +97,27 @@ docker-build:
 
 docker-up:
 	@echo "Starting Docker Compose..."
-	docker-compose -f deployments/docker/docker-compose.yml up -d
+	docker compose -f deployments/docker/docker-compose.yml up -d
 
 docker-down:
 	@echo "Stopping Docker Compose..."
-	docker-compose -f deployments/docker/docker-compose.yml down
+	docker compose -f deployments/docker/docker-compose.yml down
 
 # Database migrations
 migrate:
 	@echo "Running migrations..."
-	migrate -path ./internal/repository/migrations -database "$$DATABASE_URL" up
+	$(GOCMD) run ./cmd/migrate
 
 migrate-down:
 	@echo "Rolling back migrations..."
-	migrate -path ./internal/repository/migrations -database "$$DATABASE_URL" down
+	@echo "Down migrations are not implemented for the embedded migration runner."
 
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
 	rm -rf $(BUILD_DIR)
 	rm -f coverage.out coverage.html
-	docker-compose -f deployments/docker/docker-compose.yml down -v
+	docker compose -f deployments/docker/docker-compose.yml down -v
 
 # Development helpers
 dev-api:

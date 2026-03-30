@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 
 	"agentmsg/internal/model"
 	"agentmsg/internal/observability"
@@ -33,7 +35,7 @@ var ErrEngineDependenciesNotConfigured = errors.New("engine dependencies not con
 var ErrInvalidEngineMessage = errors.New("invalid message")
 
 type EngineConfig struct {
-	WorkerCount     int
+	WorkerCount    int
 	BatchSize      int
 	FlushInterval  time.Duration
 	MaxRetries     int
@@ -52,11 +54,11 @@ func NewMessageEngine(cfg *EngineConfig, db *repository.PostgresDB, redis *repos
 	}
 
 	return &MessageEngine{
-		config:  cfg,
-		db:      db,
-		redis:   redis,
-		router:  NewMessageRouter(),
-		dlq:     NewDeadLetterQueue(redis, db, cfg.MaxRetries),
+		config: cfg,
+		db:     db,
+		redis:  redis,
+		router: NewMessageRouter(),
+		dlq:    NewDeadLetterQueue(redis, db, cfg.MaxRetries),
 	}
 }
 
@@ -151,13 +153,17 @@ func (e *MessageEngine) processWorker() {
 
 func (e *MessageEngine) routeMessage(ctx context.Context, msg *model.Message) error {
 	start := time.Now()
+	ctx, span := otel.Tracer("agentmsg/engine").Start(ctx, "message.route")
+	defer span.End()
 	routes, err := e.router.Route(msg)
 	if err != nil {
 		observability.RecordMessageOperation("route", "routing_error", time.Since(start))
+		span.RecordError(err)
 		return err
 	}
 	if len(routes) == 0 {
 		observability.RecordMessageOperation("route", "no_routes", time.Since(start))
+		span.SetAttributes(attribute.String("message.outcome", "no_routes"))
 		return errors.New("no routes available for message")
 	}
 
@@ -172,17 +178,25 @@ func (e *MessageEngine) routeMessage(ctx context.Context, msg *model.Message) er
 
 	if publishErr != nil {
 		observability.RecordMessageOperation("route", "publish_error", time.Since(start))
+		span.RecordError(publishErr)
 		return publishErr
 	}
 
 	if e.db != nil {
 		if err := e.db.UpdateMessageStatus(ctx, msg.ID, model.MessageStatusSent); err != nil {
 			observability.RecordMessageOperation("route", "status_update_error", time.Since(start))
+			span.RecordError(err)
 			return err
 		}
 	}
 
 	observability.RecordMessageOperation("route", "sent", time.Since(start))
+	span.SetAttributes(
+		attribute.String("message.id", msg.ID.String()),
+		attribute.String("message.trace_id", msg.TraceID),
+		attribute.Int("message.route_count", len(routes)),
+		attribute.String("message.outcome", "sent"),
+	)
 	return nil
 }
 
@@ -242,8 +256,8 @@ type RoutingStrategy interface {
 
 type Route struct {
 	RecipientID uuid.UUID
-	Channel    string
-	Priority   int
+	Channel     string
+	Priority    int
 }
 
 func (r *MessageRouter) Route(msg *model.Message) ([]Route, error) {
