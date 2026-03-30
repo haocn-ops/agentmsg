@@ -219,12 +219,17 @@ Environment variables:
 | `JWT_SECRET` | HMAC secret for agent JWTs | `dev-secret` |
 | `AUTO_MIGRATE` | Run embedded SQL migrations on startup | `false` |
 | `OTEL_ENABLED` | Enable OpenTelemetry tracing export | `false` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP HTTP collector endpoint | - |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP HTTP collector endpoint, required when tracing is enabled | - |
 | `OTEL_INSECURE` | Disable TLS for OTLP exporter | `true` |
 | `RATE_LIMIT_REQUESTS` | Redis-backed request budget per window | `600` |
 | `RATE_LIMIT_WINDOW_SECONDS` | Rate limit window size in seconds | `60` |
 | `LOG_LEVEL` | Logging level | `info` |
 | `ENV` | Deployment environment label | `development` |
+
+Production guardrails:
+
+- API Gateway refuses to start in `production` with the default development `JWT_SECRET`.
+- Any service refuses to start with `OTEL_ENABLED=true` and no `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 Operational endpoints:
 

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -55,6 +57,38 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
+func (c *Config) Validate(requireJWTSecret bool) error {
+	if c == nil {
+		return fmt.Errorf("invalid config: config is nil")
+	}
+
+	var issues []string
+
+	if c.RateLimitRequests <= 0 {
+		issues = append(issues, "RATE_LIMIT_REQUESTS must be greater than 0")
+	}
+	if c.RateLimitWindow <= 0 {
+		issues = append(issues, "RATE_LIMIT_WINDOW_SECONDS must be greater than 0")
+	}
+	if c.OTELEnabled && strings.TrimSpace(c.OTELExporterOTLPEndpoint) == "" {
+		issues = append(issues, "OTEL_EXPORTER_OTLP_ENDPOINT is required when OTEL_ENABLED=true")
+	}
+	if requireJWTSecret {
+		if strings.TrimSpace(c.JWTSecret) == "" {
+			issues = append(issues, "JWT_SECRET is required")
+		}
+		if isProductionEnv(c.Env) && isInsecureJWTSecret(c.JWTSecret) {
+			issues = append(issues, "JWT_SECRET must be changed from development defaults in production")
+		}
+	}
+
+	if len(issues) > 0 {
+		return fmt.Errorf("invalid config: %s", strings.Join(issues, "; "))
+	}
+
+	return nil
+}
+
 func getEnv(key, defaultValue string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -78,4 +112,29 @@ func getEnvBool(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+func isProductionEnv(env string) bool {
+	switch strings.ToLower(strings.TrimSpace(env)) {
+	case "prod", "production":
+		return true
+	default:
+		return false
+	}
+}
+
+func isInsecureJWTSecret(secret string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(secret))
+	switch {
+	case normalized == "":
+		return true
+	case normalized == "dev-secret":
+		return true
+	case strings.Contains(normalized, "change-me"):
+		return true
+	case strings.Contains(normalized, "change-in-production"):
+		return true
+	default:
+		return false
+	}
 }

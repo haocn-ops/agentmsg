@@ -28,6 +28,10 @@ func main() {
 		logger.Error("Failed to load config", "error", err)
 		os.Exit(1)
 	}
+	if err := cfg.Validate(false); err != nil {
+		logger.Error("Invalid configuration", "error", err)
+		os.Exit(1)
+	}
 
 	db, err := repository.NewPostgresDB(cfg.DatabaseURL)
 	if err != nil {
