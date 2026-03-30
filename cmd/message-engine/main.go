@@ -18,6 +18,10 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -26,24 +30,24 @@ func main() {
 	cfg, err := config.Load(".")
 	if err != nil {
 		logger.Error("Failed to load config", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	if err := cfg.Validate(false); err != nil {
 		logger.Error("Invalid configuration", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	db, err := repository.NewPostgresDB(cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("Failed to connect to database", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer db.Close()
 
 	redisClient, err := repository.NewRedisClient(cfg.RedisURL)
 	if err != nil {
 		logger.Error("Failed to connect to Redis", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer redisClient.Close()
 
@@ -56,7 +60,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("Failed to initialize tracing", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -76,12 +80,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() {
-		if err := msgEngine.Start(ctx); err != nil {
-			logger.Error("Engine error", "error", err)
-			os.Exit(1)
-		}
-	}()
+	if err := msgEngine.Start(ctx); err != nil {
+		logger.Error("Engine error", "error", err)
+		return 1
+	}
 
 	healthMux := http.NewServeMux()
 	healthMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -117,20 +119,19 @@ func main() {
 		Handler:           metricsMux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	errCh := make(chan error, 2)
 
 	go func() {
 		logger.Info("Starting message engine health server", "addr", cfg.MessageEnginePort)
 		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("Health server error", "error", err)
-			os.Exit(1)
+			errCh <- fmt.Errorf("health server: %w", err)
 		}
 	}()
 
 	go func() {
 		logger.Info("Starting message engine metrics server", "port", "9091")
 		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("Metrics server error", "error", err)
-			os.Exit(1)
+			errCh <- fmt.Errorf("metrics server: %w", err)
 		}
 	}()
 
@@ -138,7 +139,14 @@ func main() {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+
+	var fatalErr error
+	select {
+	case sig := <-quit:
+		logger.Info("Received shutdown signal", "signal", sig.String())
+	case fatalErr = <-errCh:
+		logger.Error("Runtime server error", "error", fatalErr)
+	}
 
 	logger.Info("Shutting down engine...")
 	cancel()
@@ -149,6 +157,10 @@ func main() {
 	_ = metricsServer.Shutdown(shutdownCtx)
 
 	logger.Info("Engine exited")
+	if fatalErr != nil {
+		return 1
+	}
+	return 0
 }
 
 func init() {

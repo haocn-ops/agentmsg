@@ -21,6 +21,10 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -29,31 +33,31 @@ func main() {
 	cfg, err := config.Load(".")
 	if err != nil {
 		logger.Error("Failed to load config", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	if err := cfg.Validate(true); err != nil {
 		logger.Error("Invalid configuration", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	db, err := repository.NewPostgresDB(cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("Failed to connect to database", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer db.Close()
 
 	if cfg.AutoMigrate {
 		if err := repository.RunMigrations(context.Background(), db); err != nil {
 			logger.Error("Failed to run migrations", "error", err)
-			os.Exit(1)
+			return 1
 		}
 	}
 
 	redisClient, err := repository.NewRedisClient(cfg.RedisURL)
 	if err != nil {
 		logger.Error("Failed to connect to Redis", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer redisClient.Close()
 
@@ -66,7 +70,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("Failed to initialize tracing", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -98,26 +102,39 @@ func main() {
 		Middleware:     middleware.NewMiddleware(redisClient, db, authService, cfg.RateLimitRequests, cfg.RateLimitWindow),
 	})
 
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsServer := &http.Server{
+		Addr:              ":9090",
+		Handler:           metricsMux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	errCh := make(chan error, 2)
+
 	go func() {
 		logger.Info("Starting API Gateway", "addr", cfg.APIGatewayPort)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("Server error", "error", err)
-			os.Exit(1)
+			errCh <- fmt.Errorf("api gateway: %w", err)
 		}
 	}()
 
 	go func() {
-		metricsMux := http.NewServeMux()
-		metricsMux.Handle("/metrics", promhttp.Handler())
 		logger.Info("Starting metrics server", "port", "9090")
-		if err := http.ListenAndServe(":9090", metricsMux); err != nil {
-			logger.Error("Metrics server error", "error", err)
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("metrics server: %w", err)
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+
+	var fatalErr error
+	select {
+	case sig := <-quit:
+		logger.Info("Received shutdown signal", "signal", sig.String())
+	case fatalErr = <-errCh:
+		logger.Error("Runtime server error", "error", fatalErr)
+	}
 
 	logger.Info("Shutting down server...")
 
@@ -127,6 +144,13 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Error("Server forced to shutdown", "error", err)
 	}
+	if err := metricsServer.Shutdown(ctx); err != nil {
+		logger.Error("Metrics server forced to shutdown", "error", err)
+	}
 
 	logger.Info("Server exited")
+	if fatalErr != nil {
+		return 1
+	}
+	return 0
 }
