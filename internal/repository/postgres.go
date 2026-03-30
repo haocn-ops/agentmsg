@@ -63,7 +63,7 @@ func (p *PostgresDB) UpdateMessageStatus(ctx context.Context, id uuid.UUID, stat
 		SET
 			status = $2,
 			processed_at = CASE
-				WHEN $2 IN ('delivered', 'processed', 'failed', 'dead_letter') THEN NOW()
+				WHEN $2::varchar IN ('delivered', 'processed', 'failed', 'dead_letter') THEN NOW()
 				ELSE processed_at
 			END
 		WHERE id = $1
@@ -160,6 +160,25 @@ type AgentRepository struct {
 	db *sqlx.DB
 }
 
+const agentSelectColumns = `
+	id,
+	tenant_id,
+	did,
+	public_key,
+	name,
+	version,
+	provider,
+	tier,
+	COALESCE(NULLIF(capabilities, 'null'::jsonb), '[]'::jsonb) AS capabilities,
+	COALESCE(NULLIF(endpoints, 'null'::jsonb), '[]'::jsonb) AS endpoints,
+	trust_level,
+	verified_at,
+	status,
+	COALESCE(last_heartbeat, '0001-01-01T00:00:00Z'::timestamptz) AS last_heartbeat,
+	created_at,
+	updated_at
+`
+
 func NewAgentRepository(db *PostgresDB) *AgentRepository {
 	return &AgentRepository{db: db.DB()}
 }
@@ -179,7 +198,7 @@ func (r *AgentRepository) Create(ctx context.Context, agent *model.Agent) error 
 
 func (r *AgentRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Agent, error) {
 	var agent model.Agent
-	query := `SELECT * FROM agents WHERE id = $1 AND deleted_at IS NULL`
+	query := `SELECT ` + agentSelectColumns + ` FROM agents WHERE id = $1 AND deleted_at IS NULL`
 	err := r.db.GetContext(ctx, &agent, query, id)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -192,7 +211,7 @@ func (r *AgentRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Age
 
 func (r *AgentRepository) GetByIDForTenant(ctx context.Context, tenantID, id uuid.UUID) (*model.Agent, error) {
 	var agent model.Agent
-	query := `SELECT * FROM agents WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
+	query := `SELECT ` + agentSelectColumns + ` FROM agents WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
 	err := r.db.GetContext(ctx, &agent, query, id, tenantID)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -205,7 +224,7 @@ func (r *AgentRepository) GetByIDForTenant(ctx context.Context, tenantID, id uui
 
 func (r *AgentRepository) GetByDID(ctx context.Context, did string) (*model.Agent, error) {
 	var agent model.Agent
-	query := `SELECT * FROM agents WHERE did = $1 AND deleted_at IS NULL`
+	query := `SELECT ` + agentSelectColumns + ` FROM agents WHERE did = $1 AND deleted_at IS NULL`
 	err := r.db.GetContext(ctx, &agent, query, did)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -262,7 +281,7 @@ func (r *AgentRepository) DeleteForTenant(ctx context.Context, tenantID, id uuid
 
 func (r *AgentRepository) ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]model.Agent, error) {
 	var agents []model.Agent
-	query := `SELECT * FROM agents WHERE tenant_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC`
+	query := `SELECT ` + agentSelectColumns + ` FROM agents WHERE tenant_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC`
 	err := r.db.SelectContext(ctx, &agents, query, tenantID)
 	if err != nil {
 		return nil, err
@@ -288,7 +307,7 @@ func (r *AgentRepository) UpdateStatusForTenant(ctx context.Context, tenantID, i
 func (r *AgentRepository) QueryByCapabilities(ctx context.Context, tenantID uuid.UUID, capabilities []string) ([]model.Agent, error) {
 	var agents []model.Agent
 	query := `
-		SELECT * FROM agents
+		SELECT ` + agentSelectColumns + ` FROM agents
 		WHERE tenant_id = $1
 		AND deleted_at IS NULL
 		AND status = 'online'
@@ -304,7 +323,7 @@ func (r *AgentRepository) QueryByCapabilities(ctx context.Context, tenantID uuid
 
 func (r *AgentRepository) ListAll(ctx context.Context) ([]model.Agent, error) {
 	var agents []model.Agent
-	query := `SELECT * FROM agents WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1000`
+	query := `SELECT ` + agentSelectColumns + ` FROM agents WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1000`
 	err := r.db.SelectContext(ctx, &agents, query)
 	if err != nil {
 		return nil, err
@@ -314,7 +333,7 @@ func (r *AgentRepository) ListAll(ctx context.Context) ([]model.Agent, error) {
 
 func (r *AgentRepository) GetByStatus(ctx context.Context, status model.AgentStatus) ([]model.Agent, error) {
 	var agents []model.Agent
-	query := `SELECT * FROM agents WHERE status = $1 AND deleted_at IS NULL ORDER BY created_at DESC`
+	query := `SELECT ` + agentSelectColumns + ` FROM agents WHERE status = $1 AND deleted_at IS NULL ORDER BY created_at DESC`
 	err := r.db.SelectContext(ctx, &agents, query, status)
 	if err != nil {
 		return nil, err
@@ -387,7 +406,7 @@ func (r *MessageRepository) UpdateStatus(ctx context.Context, id uuid.UUID, stat
 		SET
 			status = $2,
 			processed_at = CASE
-				WHEN $2 IN ('delivered', 'processed', 'failed', 'dead_letter') THEN NOW()
+				WHEN $2::varchar IN ('delivered', 'processed', 'failed', 'dead_letter') THEN NOW()
 				ELSE processed_at
 			END
 		WHERE id = $1

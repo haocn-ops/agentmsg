@@ -81,6 +81,8 @@ func TestMessageAckAndAuditE2E(t *testing.T) {
 
 	token, err := authService.GenerateToken(senderID, tenantID)
 	require.NoError(t, err)
+	recipientToken, err := authService.GenerateToken(recipientID, tenantID)
+	require.NoError(t, err)
 
 	sendPayload := map[string]any{
 		"messageType":       "generic",
@@ -122,7 +124,7 @@ func TestMessageAckAndAuditE2E(t *testing.T) {
 
 	ackReq, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/messages/"+sendResult.MessageID.String()+"/ack", bytes.NewReader(ackBody))
 	require.NoError(t, err)
-	ackReq.Header.Set("Authorization", "Bearer "+token)
+	ackReq.Header.Set("Authorization", "Bearer "+recipientToken)
 	ackReq.Header.Set("Content-Type", "application/json")
 	ackReq.Header.Set("X-Trace-ID", "trace-e2e")
 
@@ -145,6 +147,108 @@ func TestMessageAckAndAuditE2E(t *testing.T) {
 	query := `SELECT COUNT(*) FROM audit_logs WHERE trace_id = $1 AND action IN ('messages.create', 'messages.ack')`
 	require.NoError(t, db.DB().GetContext(context.Background(), &auditCount, query, "trace-e2e"))
 	require.GreaterOrEqual(t, auditCount, 2)
+}
+
+func TestAgentCreateAndListE2E(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	redisURL := os.Getenv("REDIS_URL")
+	if databaseURL == "" || redisURL == "" {
+		t.Skip("DATABASE_URL and REDIS_URL must be set for e2e integration tests")
+	}
+
+	db, err := repository.NewPostgresDB(databaseURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	redisClient, err := repository.NewRedisClient(redisURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, redisClient.Close()) }()
+
+	applyTestMigrations(t, db)
+
+	tenantID := uuid.New()
+	authAgentID := uuid.New()
+	existingAgentID := uuid.New()
+	insertTenantAndAgents(t, db, tenantID, authAgentID, existingAgentID)
+	defer cleanupTenantData(t, db, tenantID)
+
+	agentRepo := repository.NewAgentRepository(db)
+	messageRepo := repository.NewMessageRepository(db)
+	ackRepo := repository.NewAcknowledgementRepository(db)
+
+	agentService := service.NewAgentService(agentRepo, redisClient)
+	messageService := service.NewMessageService(messageRepo, ackRepo, redisClient)
+	authService := service.NewAuthService("test-secret")
+	server := NewServer(&ServerConfig{
+		Addr:         "127.0.0.1:0",
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}, &Dependencies{
+		AgentService:   agentService,
+		MessageService: messageService,
+		AuthService:    authService,
+		Database:       db,
+		Redis:          redisClient,
+		Middleware:     middleware.NewMiddleware(redisClient, db, authService, 1000, time.Minute),
+	})
+
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	defer httpServer.Close()
+
+	token, err := authService.GenerateToken(authAgentID, tenantID)
+	require.NoError(t, err)
+
+	createPayload := map[string]any{
+		"did":          "did:agent:e2e:list-created",
+		"publicKey":    "created-public-key",
+		"name":         "created-agent",
+		"version":      "1.0.0",
+		"provider":     "e2e",
+		"capabilities": []any{},
+	}
+	createBody, err := json.Marshal(createPayload)
+	require.NoError(t, err)
+
+	createReq, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/agents", bytes.NewReader(createBody))
+	require.NoError(t, err)
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createReq.Header.Set("Content-Type", "application/json")
+
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	defer createResp.Body.Close()
+	require.Equal(t, http.StatusCreated, createResp.StatusCode)
+
+	var createdAgent model.Agent
+	require.NoError(t, json.NewDecoder(createResp.Body).Decode(&createdAgent))
+	require.Equal(t, tenantID, createdAgent.TenantID)
+	require.Equal(t, "created-agent", createdAgent.Name)
+
+	listReq, err := http.NewRequest(http.MethodGet, httpServer.URL+"/api/v1/agents", nil)
+	require.NoError(t, err)
+	listReq.Header.Set("Authorization", "Bearer "+token)
+
+	listResp, err := http.DefaultClient.Do(listReq)
+	require.NoError(t, err)
+	defer listResp.Body.Close()
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+
+	var agents []model.Agent
+	require.NoError(t, json.NewDecoder(listResp.Body).Decode(&agents))
+	require.Len(t, agents, 3)
+
+	var found bool
+	for _, agent := range agents {
+		if agent.ID == createdAgent.ID {
+			found = true
+			require.Equal(t, "created-agent", agent.Name)
+			require.Equal(t, tenantID, agent.TenantID)
+			require.NotNil(t, agent.Endpoints)
+			break
+		}
+	}
+	require.True(t, found)
 }
 
 func applyTestMigrations(t *testing.T, db *repository.PostgresDB) {
