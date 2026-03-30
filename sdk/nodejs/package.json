@@ -4,14 +4,42 @@
   "description": "AgentMsg Node.js SDK - Reliable messaging for AI Agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "npm run build && node --test tests/**/*.test.cjs"
+    "test": "npm run build && node --test tests/**/*.test.cjs",
+    "prepack": "npm run build",
+    "pack:dry-run": "npm pack --dry-run"
   },
   "keywords": ["agentmsg", "messaging", "ai", "agents"],
   "author": "",
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haocn-ops/agentmsg.git",
+    "directory": "sdk/nodejs"
+  },
+  "homepage": "https://github.com/haocn-ops/agentmsg/tree/master/sdk/nodejs",
+  "bugs": {
+    "url": "https://github.com/haocn-ops/agentmsg/issues"
+  },
   "dependencies": {
     "ws": "^8.16.0",
     "axios": "^1.6.5",

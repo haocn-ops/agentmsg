@@ -132,7 +132,7 @@ class Client:
         agent_id: str,
         endpoint: str = "https://api.agentmsg.cloud",
         name: Optional[str] = None,
-        version: str = "0.1.0",
+        version: str = __version__,
         provider: str = "agentmsg-python-sdk",
         reconnect: bool = True,
         max_retries: int = 3,

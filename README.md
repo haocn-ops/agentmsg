@@ -99,6 +99,7 @@ SDK notes:
 - Current SDKs use the implemented REST API for send, heartbeat, discovery, and subscriptions.
 - Realtime WebSocket hooks are still experimental client-side code because the current server build does not expose `/api/v1/ws`.
 - Capability updates assume the authenticated agent already exists on the server.
+- Release baseline checks are available through `make release-check`.
 
 ### Go
 

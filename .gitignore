@@ -41,6 +41,7 @@ temp/
 *.tmp
 __pycache__/
 *.pyc
+*.egg-info/
 
 # Build artifacts
 dist/

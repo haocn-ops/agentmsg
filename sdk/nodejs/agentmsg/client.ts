@@ -17,6 +17,7 @@ import {
   AuthenticationError,
   RateLimitError,
 } from './errors';
+import { VERSION } from './version';
 
 export interface ClientConfig {
   apiKey: string;
@@ -38,7 +39,7 @@ export class Client extends EventEmitter {
     super();
     this.config = {
       endpoint: 'https://api.agentmsg.cloud',
-      version: '0.1.0',
+      version: VERSION,
       provider: 'agentmsg-nodejs-sdk',
       reconnect: true,
       maxRetries: 5,

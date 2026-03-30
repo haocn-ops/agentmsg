@@ -1,7 +1,7 @@
 # Build and Development
 ###########################
 
-.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke openapi k8s-deploy-staging k8s-deploy-production test-sdk-go test-sdk-python test-sdk-nodejs
+.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke openapi k8s-deploy-staging k8s-deploy-production test-sdk-go test-sdk-python test-sdk-nodejs release-check package-sdk-nodejs package-sdk-python
 
 # Go parameters
 GOCMD=go
@@ -48,6 +48,9 @@ help:
 	@echo "  make test-sdk-go   Run Go SDK tests"
 	@echo "  make test-sdk-python Run Python SDK tests"
 	@echo "  make test-sdk-nodejs Run Node.js SDK tests"
+	@echo "  make release-check Verify SDK release artifacts and version alignment"
+	@echo "  make package-sdk-nodejs Build the Node.js SDK tarball locally"
+	@echo "  make package-sdk-python Build Python SDK sdist and wheel locally"
 	@echo "  make clean         Clean build artifacts"
 
 # Install dependencies
@@ -96,6 +99,15 @@ test-sdk-python:
 
 test-sdk-nodejs:
 	cd sdk/nodejs && npm test
+
+release-check:
+	bash ./scripts/check-release-artifacts.sh
+
+package-sdk-nodejs:
+	cd sdk/nodejs && npm pack
+
+package-sdk-python:
+	cd sdk/python && python3 setup.py sdist --dist-dir dist && PIP_CACHE_DIR=/tmp/agentmsg-pip-cache python3 -m pip --disable-pip-version-check wheel --no-build-isolation --no-deps --wheel-dir dist .
 
 # Run linter
 lint:

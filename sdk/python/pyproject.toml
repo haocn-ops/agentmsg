@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentmsg"
+version = "0.1.0"
+description = "AgentMsg Python SDK - Reliable messaging for AI agents"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [
+  { name = "AgentMsg Maintainers" }
+]
+dependencies = [
+  "httpx>=0.26,<1"
+]
+keywords = ["agentmsg", "messaging", "ai", "agents"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12"
+]
+
+[project.urls]
+Homepage = "https://github.com/haocn-ops/agentmsg"
+Repository = "https://github.com/haocn-ops/agentmsg"
+Issues = "https://github.com/haocn-ops/agentmsg/issues"
+
+[tool.setuptools]
+packages = ["agentmsg"]
