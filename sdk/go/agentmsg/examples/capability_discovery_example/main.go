@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	agentmsg "agentmsg/sdk/go"
+	agentmsg "github.com/haocn-ops/agentmsg/sdk/go/agentmsg"
 )
 
 func main() {

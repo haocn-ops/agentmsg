@@ -22,8 +22,12 @@ mkdir -p "$output_dir"
 
 (
   cd "$repo_root/sdk/python"
+  rm -rf build dist ./*.egg-info
   python3 setup.py -q sdist --dist-dir "$output_dir" >/dev/null
-  PIP_CACHE_DIR="${TMPDIR:-/tmp}/agentmsg-pip-cache" python3 -m pip --disable-pip-version-check wheel --no-build-isolation --no-deps --wheel-dir "$output_dir" . >/dev/null
+  rm -rf build dist ./*.egg-info
+  python3 setup.py -q bdist_wheel --dist-dir "$output_dir" >/dev/null
 )
+
+tar -C "$repo_root/sdk/go" -czf "$output_dir/agentmsg-go-sdk-$(tr -d '\n' < "$repo_root/VERSION").tar.gz" agentmsg
 
 echo "release artifacts built in $output_dir"

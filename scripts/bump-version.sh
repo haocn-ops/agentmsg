@@ -51,6 +51,8 @@ perl -0pi -e "s/__version__ = \"[^\"]+\"/__version__ = \"$new_version\"/" \
   "$repo_root/sdk/python/agentmsg/__init__.py"
 perl -0pi -e "s/^version = \"[^\"]+\"/version = \"$new_version\"/m" \
   "$repo_root/sdk/python/pyproject.toml"
+perl -0pi -e "s/^const Version = \"[^\"]+\"/const Version = \"$new_version\"/m" \
+  "$repo_root/sdk/go/agentmsg/version.go"
 
 bash "$repo_root/scripts/check-release-artifacts.sh"
 

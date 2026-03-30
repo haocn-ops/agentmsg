@@ -1,4 +1,4 @@
-module agentmsg/sdk/go
+module github.com/haocn-ops/agentmsg/sdk/go/agentmsg
 
 go 1.21
 

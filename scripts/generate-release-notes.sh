@@ -25,7 +25,7 @@ cat <<EOF
 
 - Version: \`$current_version\`
 - Comparison: \`$comparison_label\`
-- Release artifacts: Node.js tarball, Python sdist, Python wheel
+- Release artifacts: Node.js tarball, Python sdist, Python wheel, Go SDK source bundle
 
 ## Verification
 

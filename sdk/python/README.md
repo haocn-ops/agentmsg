@@ -12,7 +12,9 @@ This SDK targets the currently implemented HTTP API.
 ## Release checks
 
 ```bash
+rm -rf build dist ./*.egg-info
 python3 setup.py sdist --dist-dir dist
-PIP_CACHE_DIR=/tmp/agentmsg-pip-cache python3 -m pip --disable-pip-version-check wheel --no-build-isolation --no-deps --wheel-dir dist .
+rm -rf build ./*.egg-info
+python3 setup.py bdist_wheel --dist-dir dist
 python3 -m unittest discover -s tests
 ```
