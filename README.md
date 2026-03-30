@@ -217,8 +217,12 @@ The SDK folders still contain experimental client-side WebSocket code, but `/api
 ### Kubernetes
 
 ```bash
-# Apply Kubernetes manifests
+# Apply the shared baseline
 kubectl apply -k deployments/k8s
+
+# Or deploy an environment overlay
+kubectl apply -k deployments/k8s/overlays/staging
+kubectl apply -k deployments/k8s/overlays/production
 
 # Check status
 kubectl get pods -n agentmsg

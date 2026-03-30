@@ -13,6 +13,13 @@
 kubectl apply -k deployments/k8s
 ```
 
+Environment overlays:
+
+```bash
+kubectl apply -k deployments/k8s/overlays/staging
+kubectl apply -k deployments/k8s/overlays/production
+```
+
 The manifests now include:
 
 - Rolling update strategies
@@ -21,6 +28,7 @@ The manifests now include:
 - Non-root runtime and restricted container security settings
 - A `kustomize` entrypoint for consistent rollout order
 - Baseline `NetworkPolicy` objects
+- Staging and production overlays
 
 If you use the bundled `allow-api-gateway-ingress` policy, label the ingress controller namespace with:
 

@@ -1,7 +1,7 @@
 # Build and Development
 ###########################
 
-.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke openapi
+.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke openapi k8s-deploy-staging k8s-deploy-production
 
 # Go parameters
 GOCMD=go
@@ -43,6 +43,8 @@ help:
 	@echo "  make migrate       Run database migrations"
 	@echo "  make smoke         Run local startup smoke checks"
 	@echo "  make openapi       Show the OpenAPI spec path"
+	@echo "  make k8s-deploy-staging    Deploy the staging overlay"
+	@echo "  make k8s-deploy-production Deploy the production overlay"
 	@echo "  make clean         Clean build artifacts"
 
 # Install dependencies
@@ -145,11 +147,19 @@ build-prod:
 # Kubernetes deployment
 k8s-deploy:
 	@echo "Deploying to Kubernetes..."
-	kubectl apply -f deployments/k8s/
+	kubectl apply -k deployments/k8s
+
+k8s-deploy-staging:
+	@echo "Deploying staging overlay..."
+	kubectl apply -k deployments/k8s/overlays/staging
+
+k8s-deploy-production:
+	@echo "Deploying production overlay..."
+	kubectl apply -k deployments/k8s/overlays/production
 
 k8s-delete:
 	@echo "Removing from Kubernetes..."
-	kubectl delete -f deployments/k8s/
+	kubectl delete -k deployments/k8s
 
 # Helm deployment
 helm-install:

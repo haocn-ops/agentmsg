@@ -1,0 +1,89 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+namespace: agentmsg-staging
+
+patches:
+  - target:
+      kind: Namespace
+      name: agentmsg
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: agentmsg-staging
+      - op: add
+        path: /metadata/labels/environment
+        value: staging
+  - target:
+      kind: ConfigMap
+      name: agentmsg-config
+    patch: |-
+      - op: replace
+        path: /data/ENV
+        value: staging
+      - op: replace
+        path: /data/LOG_LEVEL
+        value: debug
+  - target:
+      kind: Secret
+      name: agentmsg-secrets
+    patch: |-
+      - op: replace
+        path: /stringData/DATABASE_URL
+        value: postgres://agentmsg:PASSWORD@postgres:5432/agentmsg_staging?sslmode=require
+  - target:
+      kind: Deployment
+      name: api-gateway
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: agentmsg/api-gateway:staging
+  - target:
+      kind: Deployment
+      name: message-engine
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: agentmsg/message-engine:staging
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: api-gateway-hpa
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 5
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: message-engine-hpa
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+      - op: replace
+        path: /spec/maxReplicas
+        value: 10
+  - target:
+      kind: Ingress
+      name: agentmsg-ingress
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: api.staging.agentmsg.example.com
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: api.staging.agentmsg.example.com
+      - op: replace
+        path: /spec/tls/0/secretName
+        value: agentmsg-staging-tls
