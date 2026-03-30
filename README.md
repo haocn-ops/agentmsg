@@ -105,6 +105,7 @@ SDK notes:
 - Root release tags publish the Node and Python SDKs automatically when `NPM_TOKEN` and `PYPI_API_TOKEN` are configured.
 - Version upgrades can be synchronized with `make bump-version NEW_VERSION=X.Y.Z`.
 - Release notes can be previewed locally with `make release-notes`.
+- `make update-changelog` prepends the current structured release notes to `CHANGELOG.md`.
 
 ### Go
 

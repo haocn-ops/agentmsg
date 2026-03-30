@@ -62,12 +62,12 @@ jobs:
 
       - name: Build release artifacts
         run: |
-          chmod +x ./scripts/check-release-artifacts.sh ./scripts/build-python-sdk.sh ./scripts/build-release-artifacts.sh ./scripts/generate-release-notes.sh
+          chmod +x ./scripts/check-release-artifacts.sh ./scripts/build-python-sdk.sh ./scripts/build-release-artifacts.sh
           ./scripts/build-release-artifacts.sh ./dist/release
 
       - name: Generate release notes
         run: |
-          ./scripts/generate-release-notes.sh > ./dist/release-notes.md
+          python3 ./scripts/generate-release-notes.py > ./dist/release-notes.md
 
       - name: Generate checksums
         run: |

@@ -1,7 +1,7 @@
 # Build and Development
 ###########################
 
-.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke openapi k8s-deploy-staging k8s-deploy-production test-sdk-go test-sdk-python test-sdk-nodejs release-check package-sdk-go package-sdk-nodejs package-sdk-python build-release-artifacts bump-version release-notes version-tooling-check release-go-sdk-tag
+.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke openapi k8s-deploy-staging k8s-deploy-production test-sdk-go test-sdk-python test-sdk-nodejs release-check package-sdk-go package-sdk-nodejs package-sdk-python build-release-artifacts bump-version release-notes update-changelog version-tooling-check release-go-sdk-tag
 
 # Go parameters
 GOCMD=go
@@ -57,6 +57,7 @@ help:
 	@echo "  make build-release-artifacts Build release-ready SDK artifacts into dist/release"
 	@echo "  make bump-version NEW_VERSION=x.y.z Sync all versioned SDK files"
 	@echo "  make release-notes Generate release notes from git history"
+	@echo "  make update-changelog Prepend the current release notes to CHANGELOG.md"
 	@echo "  make version-tooling-check Validate bump-version and release notes tooling"
 	@echo "  make release-go-sdk-tag Push the Go SDK module tag sdk/go/agentmsg/vX.Y.Z"
 	@echo "  make clean         Clean build artifacts"
@@ -128,7 +129,10 @@ bump-version:
 	bash ./scripts/bump-version.sh "$(NEW_VERSION)"
 
 release-notes:
-	bash ./scripts/generate-release-notes.sh
+	python3 ./scripts/generate-release-notes.py
+
+update-changelog:
+	bash ./scripts/update-changelog.sh
 
 version-tooling-check:
 	bash ./scripts/check-version-tooling.sh

@@ -24,9 +24,10 @@ rsync -a --exclude .git "$repo_root/" "$tmp_dir/repo/"
   git config user.email "ci@example.invalid"
   git add .
   git commit -q -m "baseline"
-  chmod +x ./scripts/bump-version.sh ./scripts/check-release-artifacts.sh ./scripts/generate-release-notes.sh
+  chmod +x ./scripts/bump-version.sh ./scripts/check-release-artifacts.sh ./scripts/update-changelog.sh
   bash ./scripts/bump-version.sh "$next_patch" >/dev/null
-  bash ./scripts/generate-release-notes.sh >/tmp/agentmsg-release-notes-check.md
+  python3 ./scripts/generate-release-notes.py >/tmp/agentmsg-release-notes-check.md
+  bash ./scripts/update-changelog.sh
 )
 
 echo "version tooling verified against next patch version $next_patch"

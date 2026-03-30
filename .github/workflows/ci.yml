@@ -167,9 +167,9 @@ jobs:
         run: |
           chmod +x ./scripts/build-python-sdk.sh
           make release-check
-          chmod +x ./scripts/check-version-tooling.sh ./scripts/generate-release-notes.sh
+          chmod +x ./scripts/check-version-tooling.sh ./scripts/update-changelog.sh
           ./scripts/check-version-tooling.sh
-          ./scripts/generate-release-notes.sh > /tmp/agentmsg-release-notes.md
+          python3 ./scripts/generate-release-notes.py > /tmp/agentmsg-release-notes.md
 
   build:
     name: Build
