@@ -2,16 +2,25 @@ package engine
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 
 	"agentmsg/internal/model"
 	"agentmsg/internal/repository"
 )
 
-func setupTestEngine(t *testing.T) (*MessageEngine, *repository.PostgresDB, func()) {
+func setupTestEngine(t *testing.T) (*MessageEngine, func()) {
+	t.Helper()
+
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		t.Skip("REDIS_URL not set; skipping integration test")
+	}
+
 	cfg := &EngineConfig{
 		WorkerCount:     2,
 		BatchSize:       10,
@@ -20,25 +29,24 @@ func setupTestEngine(t *testing.T) (*MessageEngine, *repository.PostgresDB, func
 		RetryBaseDelay:  10 * time.Millisecond,
 	}
 
-	redis := &repository.RedisClient{}
-	db := &repository.PostgresDB{}
+	redis, err := repository.NewRedisClient(redisURL)
+	require.NoError(t, err)
 
-	eng := NewMessageEngine(cfg, db, redis)
+	eng := NewMessageEngine(cfg, nil, redis)
 
 	ctx := context.Background()
-	if err := eng.Start(ctx); err != nil {
-		t.Fatalf("Failed to start engine: %v", err)
-	}
+	require.NoError(t, eng.Start(ctx))
 
 	cleanup := func() {
 		eng.Stop()
+		require.NoError(t, redis.Close())
 	}
 
-	return eng, db, cleanup
+	return eng, cleanup
 }
 
 func TestMessageEngineSendMessage(t *testing.T) {
-	eng, _, cleanup := setupTestEngine(t)
+	eng, cleanup := setupTestEngine(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -72,21 +80,27 @@ func TestMessageEngineSendMessage(t *testing.T) {
 }
 
 func TestExactlyOnceEngine(t *testing.T) {
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		t.Skip("REDIS_URL not set; skipping integration test")
+	}
+
 	cfg := &ExactlyOnceConfig{
 		DeduplicationWindow: 1 * time.Hour,
 		MaxCacheSize:       1000,
 		CleanupInterval:     1 * time.Minute,
 	}
 
-	redis := &repository.RedisClient{}
-	db := &repository.PostgresDB{}
+	redis, err := repository.NewRedisClient(redisURL)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, redis.Close())
+	}()
 
-	eng := NewExactlyOnceEngine(cfg, db, redis)
+	eng := NewExactlyOnceEngine(cfg, nil, redis)
 
 	ctx := context.Background()
-	if err := eng.Start(ctx); err != nil {
-		t.Fatalf("Failed to start engine: %v", err)
-	}
+	require.NoError(t, eng.Start(ctx))
 	defer eng.Stop()
 
 	msg := &model.Message{
@@ -104,24 +118,30 @@ func TestExactlyOnceEngine(t *testing.T) {
 	}
 
 	duplicate, err := eng.IsDuplicate(ctx, msg)
-	if err != nil {
-		t.Fatalf("IsDuplicate failed: %v", err)
-	}
+	require.NoError(t, err)
 	if duplicate {
 		t.Error("Expected first message to not be duplicate")
 	}
 
 	duplicate, err = eng.IsDuplicate(ctx, msg)
-	if err != nil {
-		t.Fatalf("IsDuplicate failed for duplicate check: %v", err)
-	}
+	require.NoError(t, err)
 	if !duplicate {
 		t.Error("Expected second message to be duplicate")
 	}
 }
 
 func TestIdempotencyTracker(t *testing.T) {
-	redis := &repository.RedisClient{}
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		t.Skip("REDIS_URL not set; skipping integration test")
+	}
+
+	redis, err := repository.NewRedisClient(redisURL)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, redis.Close())
+	}()
+
 	tracker := NewIdempotencyTracker(redis)
 
 	ctx := context.Background()
@@ -130,37 +150,29 @@ func TestIdempotencyTracker(t *testing.T) {
 	resultID := uuid.New().String()
 
 	exists, err := tracker.Check(ctx, key)
-	if err != nil {
-		t.Fatalf("Check failed: %v", err)
-	}
+	require.NoError(t, err)
 	if exists {
 		t.Error("Expected key to not exist initially")
 	}
 
 	err = tracker.Record(ctx, key, resultID, 60)
-	if err != nil {
-		t.Fatalf("Record failed: %v", err)
-	}
+	require.NoError(t, err)
 
 	exists, err = tracker.Check(ctx, key)
-	if err != nil {
-		t.Fatalf("Check failed after record: %v", err)
-	}
+	require.NoError(t, err)
 	if !exists {
 		t.Error("Expected key to exist after record")
 	}
 
 	storedResult, err := tracker.GetResult(ctx, key)
-	if err != nil {
-		t.Fatalf("GetResult failed: %v", err)
-	}
+	require.NoError(t, err)
 	if storedResult == "" {
 		t.Error("Expected non-empty result")
 	}
 }
 
 func TestMessageRouting(t *testing.T) {
-	eng, _, cleanup := setupTestEngine(t)
+	eng, cleanup := setupTestEngine(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -191,24 +203,10 @@ func TestMessageRouting(t *testing.T) {
 }
 
 func TestDeadLetterQueue(t *testing.T) {
-	cfg := &EngineConfig{
-		WorkerCount:     1,
-		BatchSize:       10,
-		FlushInterval:   100 * time.Millisecond,
-		MaxRetries:      2,
-		RetryBaseDelay:  10 * time.Millisecond,
-	}
-
-	redis := &repository.RedisClient{}
-	db := &repository.PostgresDB{}
-
-	eng := NewMessageEngine(cfg, db, redis)
+	eng, cleanup := setupTestEngine(t)
+	defer cleanup()
 
 	ctx := context.Background()
-	if err := eng.Start(ctx); err != nil {
-		t.Fatalf("Failed to start engine: %v", err)
-	}
-	defer eng.Stop()
 
 	msg := &model.Message{
 		ID:               uuid.New(),
@@ -225,7 +223,5 @@ func TestDeadLetterQueue(t *testing.T) {
 	}
 
 	_, err := eng.SendMessage(ctx, msg)
-	if err != nil {
-		t.Fatalf("SendMessage failed: %v", err)
-	}
+	require.NoError(t, err)
 }

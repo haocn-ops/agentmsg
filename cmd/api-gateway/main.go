@@ -61,7 +61,7 @@ func main() {
 		AgentService:   agentService,
 		MessageService: messageService,
 		AuthService:   authService,
-		Middleware:     middleware.NewMiddleware(redisClient),
+		Middleware:     middleware.NewMiddleware(redisClient, authService),
 	})
 
 	go func() {

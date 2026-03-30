@@ -20,10 +20,15 @@ func (p *PostgresDB) GetMessageByID(ctx context.Context, id uuid.UUID) (*model.M
 	var msg model.Message
 	query := `SELECT * FROM messages WHERE id = $1`
 	err := p.db.GetContext(ctx, &msg, query, id)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	msg.ScanRecipients()
+	if err := msg.ScanRecipients(); err != nil {
+		return nil, err
+	}
 	return &msg, nil
 }
 
@@ -42,6 +47,9 @@ func (p *PostgresDB) GetAcknowledgement(ctx context.Context, messageID uuid.UUID
 	var ack model.Acknowledgement
 	query := `SELECT * FROM acknowledgements WHERE message_id = $1 LIMIT 1`
 	err := p.db.GetContext(ctx, &ack, query, messageID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +204,12 @@ func NewMessageRepository(db *PostgresDB) *MessageRepository {
 }
 
 func (r *MessageRepository) Create(ctx context.Context, msg *model.Message) error {
+	if msg.RecipientStr == "" {
+		if err := msg.SetRecipients(); err != nil {
+			return err
+		}
+	}
+
 	query := `
 		INSERT INTO messages (id, conversation_id, message_type, sender_id, recipient_ids, content, content_size, content_type, metadata, delivery_guarantee, status, task_context, trace_id, tenant_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
@@ -218,7 +232,9 @@ func (r *MessageRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.M
 	if err != nil {
 		return nil, err
 	}
-	msg.ScanRecipients()
+	if err := msg.ScanRecipients(); err != nil {
+		return nil, err
+	}
 	return &msg, nil
 }
 
@@ -236,7 +252,9 @@ func (r *MessageRepository) ListByConversation(ctx context.Context, conversation
 		return nil, err
 	}
 	for i := range messages {
-		messages[i].ScanRecipients()
+		if err := messages[i].ScanRecipients(); err != nil {
+			return nil, err
+		}
 	}
 	return messages, nil
 }
@@ -249,7 +267,9 @@ func (r *MessageRepository) ListByTenant(ctx context.Context, tenantID uuid.UUID
 		return nil, err
 	}
 	for i := range messages {
-		messages[i].ScanRecipients()
+		if err := messages[i].ScanRecipients(); err != nil {
+			return nil, err
+		}
 	}
 	return messages, nil
 }
@@ -277,6 +297,9 @@ func (r *AcknowledgementRepository) GetByMessageID(ctx context.Context, messageI
 	var ack model.Acknowledgement
 	query := `SELECT * FROM acknowledgements WHERE message_id = $1 LIMIT 1`
 	err := r.db.GetContext(ctx, &ack, query, messageID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

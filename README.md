@@ -27,7 +27,7 @@ AgentMsg is a messaging platform designed specifically for AI Agent communicatio
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/agentmsg.git
+git clone https://github.com/haocn-ops/agentmsg.git
 cd agentmsg
 
 # Install dependencies
@@ -44,10 +44,10 @@ make run
 
 ```bash
 # Start all services
-docker-compose up -d
+docker-compose -f deployments/docker/docker-compose.yml up -d
 
 # View logs
-docker-compose logs -f
+docker-compose -f deployments/docker/docker-compose.yml logs -f
 ```
 
 ## SDKs

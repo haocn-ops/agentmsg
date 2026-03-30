@@ -58,6 +58,10 @@ func (e *ExactlyOnceEngine) Stop() {
 }
 
 func (e *ExactlyOnceEngine) IsDuplicate(ctx context.Context, msg *model.Message) (bool, error) {
+	if e.redis == nil {
+		return false, ErrEngineDependenciesNotConfigured
+	}
+
 	key := e.generateDeduplicationKey(msg)
 
 	exists, err := e.redis.Exists(ctx, "dedup:"+key)
@@ -104,6 +108,10 @@ func (e *ExactlyOnceEngine) generateDeduplicationKey(msg *model.Message) string 
 }
 
 func (e *ExactlyOnceEngine) checkInDB(ctx context.Context, messageID uuid.UUID) (bool, error) {
+	if e.db == nil {
+		return false, ErrEngineDependenciesNotConfigured
+	}
+
 	msg, err := e.db.GetMessageByID(ctx, messageID)
 	if err != nil {
 		return false, err
@@ -138,6 +146,10 @@ func (e *ExactlyOnceEngine) cleanup() {
 }
 
 func (e *ExactlyOnceEngine) GetDeliveryStatus(ctx context.Context, messageID uuid.UUID) (model.MessageStatus, error) {
+	if e.db == nil {
+		return "", ErrEngineDependenciesNotConfigured
+	}
+
 	msg, err := e.db.GetMessageByID(ctx, messageID)
 	if err != nil {
 		return "", err
@@ -149,10 +161,17 @@ func (e *ExactlyOnceEngine) GetDeliveryStatus(ctx context.Context, messageID uui
 }
 
 func (e *ExactlyOnceEngine) RecordAcknowledgement(ctx context.Context, ack *model.Acknowledgement) error {
+	if e.db == nil {
+		return ErrEngineDependenciesNotConfigured
+	}
 	return e.db.CreateAcknowledgement(ctx, ack)
 }
 
 func (e *ExactlyOnceEngine) VerifyAcknowledgement(ctx context.Context, messageID uuid.UUID, nonce string) (bool, error) {
+	if e.db == nil {
+		return false, ErrEngineDependenciesNotConfigured
+	}
+
 	ack, err := e.db.GetAcknowledgement(ctx, messageID)
 	if err != nil {
 		return false, err
@@ -172,17 +191,26 @@ func NewIdempotencyTracker(redis *repository.RedisClient) *IdempotencyTracker {
 }
 
 func (t *IdempotencyTracker) Check(ctx context.Context, idempotencyKey string) (bool, error) {
+	if t.redis == nil {
+		return false, ErrEngineDependenciesNotConfigured
+	}
 	key := "idempotency:" + idempotencyKey
 	exists, err := t.redis.Exists(ctx, key)
 	return exists, err
 }
 
 func (t *IdempotencyTracker) Record(ctx context.Context, idempotencyKey string, resultID string, ttlSeconds int) error {
+	if t.redis == nil {
+		return ErrEngineDependenciesNotConfigured
+	}
 	key := "idempotency:" + idempotencyKey
 	value := resultID + ":" + time.Now().Format(time.RFC3339Nano)
 	return t.redis.SetWithExpiry(ctx, key, value, ttlSeconds)
 }
 
 func (t *IdempotencyTracker) GetResult(ctx context.Context, idempotencyKey string) (string, error) {
+	if t.redis == nil {
+		return "", ErrEngineDependenciesNotConfigured
+	}
 	return t.redis.Get(ctx, "idempotency:"+idempotencyKey)
 }

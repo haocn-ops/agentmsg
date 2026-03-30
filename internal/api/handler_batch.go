@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -25,15 +26,12 @@ func (s *Server) sendBatchMessages(c *gin.Context) {
 
 	results := make([]model.SendResult, 0, len(req.Messages))
 	for _, msgReq := range req.Messages {
-		msg := &model.Message{
-			ConversationID: uuid.New(),
-			MessageType:    msgReq.MessageType,
-			SenderID:      senderID,
-			RecipientIDs:  msgReq.Recipients,
-			DeliveryGuarantee: msgReq.DeliveryGuarantee,
-			Metadata:      model.MessageMetadata{Custom: msgReq.Metadata},
-			TaskContext:   msgReq.TaskContext,
-			TenantID:      tenantID,
+		msg, err := buildMessageFromRequest(senderID, tenantID, msgReq)
+		if err != nil {
+			results = append(results, model.SendResult{
+				Status: "error: " + err.Error(),
+			})
+			continue
 		}
 
 		result, err := s.deps.MessageService.Send(c.Request.Context(), msg)
@@ -114,7 +112,7 @@ func (s *Server) createSubscription(c *gin.Context) {
 		Type:      req.Type,
 		Filter:    req.Filter,
 		Status:    model.SubStatusActive,
-		CreatedAt: 0,
+		CreatedAt: time.Now().Unix(),
 	}
 
 	if err := s.deps.MessageService.CreateSubscription(c.Request.Context(), subscription); err != nil {

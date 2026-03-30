@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"encoding/json"
-	"net/url"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,15 +16,13 @@ type RedisClient struct {
 }
 
 func NewRedisClient(redisURL string) (*RedisClient, error) {
-	u, err := url.Parse(redisURL)
+	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
 		return nil, err
 	}
 
-	client := redis.NewClient(&redis.Options{
-		Addr:     u.Host,
-		PoolSize: 100,
-	})
+	opts.PoolSize = 100
+	client := redis.NewClient(opts)
 
 	ctx := context.Background()
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -80,7 +77,7 @@ func (r *RedisClient) HGetAll(ctx context.Context, key string) (map[string]strin
 }
 
 func (r *RedisClient) Expire(ctx context.Context, key string, seconds int) error {
-	return r.client.Expire(ctx, key, 0).Err()
+	return r.client.Expire(ctx, key, time.Duration(seconds)*time.Second).Err()
 }
 
 func (r *RedisClient) Incr(ctx context.Context, key string) (int64, error) {

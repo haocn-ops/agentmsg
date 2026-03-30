@@ -6,27 +6,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+
+	"agentmsg/internal/model"
 )
 
-type mockAgentRepo struct {
-	agents map[uuid.UUID]*mockAgent
-}
-
-type mockAgent struct {
-	id        uuid.UUID
-	tenantID  uuid.UUID
-	did       string
-	publicKey string
-	name      string
-	status    string
-}
-
-func TestAgentServiceRegister(t *testing.T) {
+func TestAgentServiceRegisterRequiresDependencies(t *testing.T) {
 	ctx := context.Background()
 
 	svc := &AgentService{}
 
-	agent := &Agent{
+	agent := &model.Agent{
 		ID:        uuid.New(),
 		TenantID:  uuid.New(),
 		DID:       "did:agent:test-001",
@@ -35,12 +24,10 @@ func TestAgentServiceRegister(t *testing.T) {
 	}
 
 	err := svc.Register(ctx, agent)
-	assert.NoError(t, err)
-	assert.NotEqual(t, uuid.Nil, agent.ID)
-	assert.Equal(t, AgentStatusOnline, agent.Status)
+	assert.ErrorIs(t, err, ErrServiceUnavailable)
 }
 
-func TestAgentServiceGetByID(t *testing.T) {
+func TestAgentServiceGetByIDWithoutRepository(t *testing.T) {
 	ctx := context.Background()
 
 	svc := &AgentService{
@@ -50,11 +37,11 @@ func TestAgentServiceGetByID(t *testing.T) {
 	agentID := uuid.New()
 
 	agent, err := svc.GetByID(ctx, agentID)
-	assert.Error(t, err)
-	assert.Equal(t, ErrAgentNotFound, err)
+	assert.ErrorIs(t, err, ErrServiceUnavailable)
+	assert.Nil(t, agent)
 }
 
-func TestAgentServiceHeartbeat(t *testing.T) {
+func TestAgentServiceHeartbeatRequiresDependencies(t *testing.T) {
 	ctx := context.Background()
 
 	svc := &AgentService{}
@@ -62,24 +49,24 @@ func TestAgentServiceHeartbeat(t *testing.T) {
 	agentID := uuid.New()
 
 	err := svc.Heartbeat(ctx, agentID)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, ErrServiceUnavailable)
 }
 
-func TestAgentServiceUpdateCapabilities(t *testing.T) {
+func TestAgentServiceUpdateCapabilitiesWithoutRepository(t *testing.T) {
 	ctx := context.Background()
 
 	svc := &AgentService{}
 
 	agentID := uuid.New()
-	capabilities := Capabilities{
+	capabilities := model.Capabilities{
 		{
-			Type:        CapabilityTextGeneration,
+			Type:        model.CapabilityTextGeneration,
 			Description: "Generate text",
 		},
 	}
 
 	err := svc.UpdateCapabilities(ctx, agentID, capabilities)
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrServiceUnavailable)
 }
 
 func TestAuthServiceGenerateToken(t *testing.T) {
@@ -100,9 +87,25 @@ func TestAuthServiceValidateToken(t *testing.T) {
 		jwtSecret: []byte("test-secret"),
 	}
 
-	token, err := svc.ValidateToken("some-token")
+	agentID := uuid.New()
+	tenantID := uuid.New()
+
+	token, err := svc.GenerateToken(agentID, tenantID)
 	assert.NoError(t, err)
-	assert.NotNil(t, token)
-	assert.NotEqual(t, uuid.Nil, token.AgentID)
-	assert.NotEqual(t, uuid.Nil, token.TenantID)
+
+	claims, err := svc.ValidateToken(token)
+	assert.NoError(t, err)
+	assert.NotNil(t, claims)
+	assert.Equal(t, agentID, claims.AgentID)
+	assert.Equal(t, tenantID, claims.TenantID)
+}
+
+func TestAuthServiceValidateTokenRejectsInvalidInput(t *testing.T) {
+	svc := &AuthService{
+		jwtSecret: []byte("test-secret"),
+	}
+
+	claims, err := svc.ValidateToken("some-token")
+	assert.ErrorIs(t, err, ErrInvalidToken)
+	assert.Nil(t, claims)
 }

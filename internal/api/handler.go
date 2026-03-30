@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -221,6 +223,51 @@ type MessageRequest struct {
 	TaskContext   *model.TaskContext     `json:"taskContext,omitempty"`
 }
 
+func buildMessageFromRequest(senderID, tenantID uuid.UUID, req MessageRequest) (*model.Message, error) {
+	content, contentType, err := serializeContent(req.Content)
+	if err != nil {
+		return nil, err
+	}
+
+	deliveryGuarantee := req.DeliveryGuarantee
+	if deliveryGuarantee == "" {
+		deliveryGuarantee = model.DeliveryAtLeastOnce
+	}
+
+	return &model.Message{
+		ConversationID:     uuid.New(),
+		MessageType:        req.MessageType,
+		SenderID:           senderID,
+		RecipientIDs:       req.Recipients,
+		Content:            content,
+		ContentSize:        len(content),
+		ContentType:        contentType,
+		DeliveryGuarantee:  deliveryGuarantee,
+		Metadata:           model.MessageMetadata{Custom: req.Metadata},
+		TaskContext:        req.TaskContext,
+		TenantID:           tenantID,
+	}, nil
+}
+
+func serializeContent(content interface{}) ([]byte, string, error) {
+	if content == nil {
+		return nil, "", errors.New("content is required")
+	}
+
+	switch value := content.(type) {
+	case string:
+		return []byte(value), "text/plain; charset=utf-8", nil
+	case []byte:
+		return value, "application/octet-stream", nil
+	default:
+		data, err := json.Marshal(value)
+		if err != nil {
+			return nil, "", err
+		}
+		return data, "application/json", nil
+	}
+}
+
 func (s *Server) sendMessage(c *gin.Context) {
 	var req MessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -231,15 +278,10 @@ func (s *Server) sendMessage(c *gin.Context) {
 	senderID := uuid.MustParse(c.GetString("agent_id"))
 	tenantID := uuid.MustParse(c.GetString("tenant_id"))
 
-	msg := &model.Message{
-		ConversationID: uuid.New(),
-		MessageType:    req.MessageType,
-		SenderID:       senderID,
-		RecipientIDs:   req.Recipients,
-		DeliveryGuarantee: req.DeliveryGuarantee,
-		Metadata:       model.MessageMetadata{Custom: req.Metadata},
-		TaskContext:    req.TaskContext,
-		TenantID:       tenantID,
+	msg, err := buildMessageFromRequest(senderID, tenantID, req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	result, err := s.deps.MessageService.Send(c.Request.Context(), msg)
@@ -271,7 +313,12 @@ func (s *Server) acknowledgeMessage(c *gin.Context) {
 		return
 	}
 
-	status := model.AckStatus(req.Status)
+	status := model.MessageStatus(req.Status)
+	if status == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "status is required"})
+		return
+	}
+
 	if err := s.deps.MessageService.Acknowledge(c.Request.Context(), id, model.MessageStatus(status)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -26,9 +26,8 @@ func TestMessageServiceSend(t *testing.T) {
 	}
 
 	result, err := svc.Send(ctx, msg)
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, model.MessageStatusSent, model.MessageStatus(result.Status))
+	assert.ErrorIs(t, err, ErrServiceUnavailable)
+	assert.Nil(t, result)
 }
 
 func TestMessageServiceGetByID(t *testing.T) {
@@ -39,7 +38,7 @@ func TestMessageServiceGetByID(t *testing.T) {
 	msgID := uuid.New()
 
 	msg, err := svc.GetByID(ctx, msgID)
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrServiceUnavailable)
 	assert.Nil(t, msg)
 }
 
@@ -52,7 +51,7 @@ func TestMessageServiceAcknowledge(t *testing.T) {
 	status := model.MessageStatusProcessed
 
 	err := svc.Acknowledge(ctx, msgID, status)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, ErrServiceUnavailable)
 }
 
 func TestMessageServiceListByConversation(t *testing.T) {
@@ -62,9 +61,19 @@ func TestMessageServiceListByConversation(t *testing.T) {
 
 	conversationID := uuid.New()
 
-	messages, err := svc.ListByConversation(ctx, conversationID)
-	assert.NoError(t, err)
-	assert.Empty(t, messages)
+	messages, err := svc.ListByConversation(ctx, conversationID, 100)
+	assert.ErrorIs(t, err, ErrServiceUnavailable)
+	assert.Nil(t, messages)
+}
+
+func TestMessageServiceSendRejectsInvalidMessage(t *testing.T) {
+	ctx := context.Background()
+
+	svc := &MessageService{}
+
+	result, err := svc.Send(ctx, &model.Message{})
+	assert.ErrorIs(t, err, ErrServiceUnavailable)
+	assert.Nil(t, result)
 }
 
 func TestMessageDeliveryGuarantees(t *testing.T) {

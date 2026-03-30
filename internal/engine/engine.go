@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -27,6 +28,9 @@ type MessageEngine struct {
 	running bool
 }
 
+var ErrEngineDependenciesNotConfigured = errors.New("engine dependencies not configured")
+var ErrInvalidEngineMessage = errors.New("invalid message")
+
 type EngineConfig struct {
 	WorkerCount     int
 	BatchSize      int
@@ -36,7 +40,15 @@ type EngineConfig struct {
 }
 
 func NewMessageEngine(cfg *EngineConfig, db *repository.PostgresDB, redis *repository.RedisClient) *MessageEngine {
-	ctx, cancel := context.WithCancel(context.Background())
+	if cfg == nil {
+		cfg = &EngineConfig{}
+	}
+	if cfg.WorkerCount <= 0 {
+		cfg.WorkerCount = 1
+	}
+	if cfg.FlushInterval <= 0 {
+		cfg.FlushInterval = 100 * time.Millisecond
+	}
 
 	return &MessageEngine{
 		config:  cfg,
@@ -44,65 +56,64 @@ func NewMessageEngine(cfg *EngineConfig, db *repository.PostgresDB, redis *repos
 		redis:   redis,
 		router:  NewMessageRouter(),
 		dlq:     NewDeadLetterQueue(redis, db, cfg.MaxRetries),
-		ctx:     ctx,
-		cancel:  cancel,
 	}
 }
 
 func (e *MessageEngine) Start(ctx context.Context) error {
+	if e.redis == nil {
+		return ErrEngineDependenciesNotConfigured
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	e.mu.Lock()
 	if e.running {
 		e.mu.Unlock()
 		return nil
 	}
+	e.ctx, e.cancel = context.WithCancel(ctx)
 	e.running = true
 	e.mu.Unlock()
 
-	e.wg.Add(2)
-	go e.messageProcessor()
-	go e.dlq.ProcessLoop()
+	e.wg.Add(e.config.WorkerCount + 1)
+	for i := 0; i < e.config.WorkerCount; i++ {
+		go e.processWorker()
+	}
+	go func() {
+		defer e.wg.Done()
+		e.dlq.ProcessLoop(e.ctx)
+	}()
 
 	return nil
 }
 
 func (e *MessageEngine) Stop() {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	if !e.running {
+		e.mu.Unlock()
 		return
 	}
+	cancel := e.cancel
+	e.mu.Unlock()
 
-	e.cancel()
+	if cancel != nil {
+		cancel()
+	}
 	e.wg.Wait()
+
+	e.mu.Lock()
 	e.running = false
-}
-
-func (e *MessageEngine) messageProcessor() {
-	defer e.wg.Done()
-
-	ticker := time.NewTicker(e.config.FlushInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-e.ctx.Done():
-			return
-		case <-ticker.C:
-			e.processBatch()
-		}
-	}
-}
-
-func (e *MessageEngine) processBatch() {
-	for i := 0; i < e.config.WorkerCount; i++ {
-		e.wg.Add(1)
-		go e.processWorker()
-	}
+	e.mu.Unlock()
 }
 
 func (e *MessageEngine) processWorker() {
 	defer e.wg.Done()
+
+	idleDelay := e.config.FlushInterval
+	if idleDelay <= 0 {
+		idleDelay = 100 * time.Millisecond
+	}
 
 	for {
 		select {
@@ -111,7 +122,7 @@ func (e *MessageEngine) processWorker() {
 		default:
 			msg, err := e.redis.RPop(e.ctx, "message:pending")
 			if err != nil {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(idleDelay)
 				continue
 			}
 
@@ -142,8 +153,33 @@ func (e *MessageEngine) routeMessage(msg *model.Message) {
 }
 
 func (e *MessageEngine) SendMessage(ctx context.Context, msg *model.Message) (*model.SendResult, error) {
-	msg.ID = uuid.New()
-	msg.CreatedAt = time.Now()
+	if e.redis == nil {
+		return nil, ErrEngineDependenciesNotConfigured
+	}
+	if msg == nil || len(msg.RecipientIDs) == 0 || len(msg.Content) == 0 {
+		return nil, ErrInvalidEngineMessage
+	}
+
+	if msg.ID == uuid.Nil {
+		msg.ID = uuid.New()
+	}
+	if msg.CreatedAt.IsZero() {
+		msg.CreatedAt = time.Now()
+	}
+	if msg.ConversationID == uuid.Nil {
+		msg.ConversationID = uuid.New()
+	}
+	if msg.DeliveryGuarantee == "" {
+		msg.DeliveryGuarantee = model.DeliveryAtLeastOnce
+	}
+	if msg.ContentType == "" {
+		msg.ContentType = "application/json"
+	}
+	msg.ContentSize = len(msg.Content)
+
+	if err := msg.SetRecipients(); err != nil {
+		return nil, err
+	}
 
 	data, _ := json.Marshal(msg)
 	if err := e.redis.LPush(ctx, "message:pending", string(data)); err != nil {
@@ -201,12 +237,14 @@ func NewDeadLetterQueue(redis *repository.RedisClient, db *repository.PostgresDB
 	}
 }
 
-func (q *DeadLetterQueue) ProcessLoop() {
+func (q *DeadLetterQueue) ProcessLoop(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-ticker.C:
 			q.process()
 		}

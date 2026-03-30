@@ -37,6 +37,21 @@ func (m *Message) ScanRecipients() error {
 	return nil
 }
 
+func (m *Message) SetRecipients() error {
+	if len(m.RecipientIDs) == 0 {
+		m.RecipientStr = "[]"
+		return nil
+	}
+
+	data, err := json.Marshal(m.RecipientIDs)
+	if err != nil {
+		return err
+	}
+
+	m.RecipientStr = string(data)
+	return nil
+}
+
 type MessageType string
 
 const (

@@ -1,8 +1,11 @@
-package main
+#!/usr/bin/env bash
 
-#!/bin/bash
+set -euo pipefail
 
-set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+cd "${REPO_ROOT}"
 
 echo "Starting AgentMsg development environment..."
 
@@ -20,10 +23,10 @@ migrate -path internal/repository/migrations -database "$DATABASE_URL" up
 
 # Start services
 echo "Starting API Gateway..."
-go run cmd/api-gateway/main.go &
+go run ./cmd/api-gateway &
 
 echo "Starting Message Engine..."
-go run cmd/message-engine/main.go &
+go run ./cmd/message-engine &
 
 echo "All services started!"
 echo "API Gateway: http://localhost:8080"

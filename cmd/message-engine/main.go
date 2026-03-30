@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"agentmsg/internal/config"
 	"agentmsg/internal/engine"
@@ -42,7 +43,7 @@ func main() {
 	msgEngine := engine.NewMessageEngine(&engine.EngineConfig{
 		WorkerCount:    16,
 		BatchSize:      100,
-		FlushInterval:  100,
+		FlushInterval:  100 * time.Millisecond,
 		MaxRetries:     3,
 	}, db, redisClient)
 
@@ -64,6 +65,7 @@ func main() {
 
 	logger.Info("Shutting down engine...")
 	cancel()
+	msgEngine.Stop()
 
 	logger.Info("Engine exited")
 }
