@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"agentmsg/internal/model"
+	"agentmsg/internal/observability"
 	"agentmsg/internal/repository"
 )
 
@@ -149,11 +150,14 @@ func (e *MessageEngine) processWorker() {
 }
 
 func (e *MessageEngine) routeMessage(ctx context.Context, msg *model.Message) error {
+	start := time.Now()
 	routes, err := e.router.Route(msg)
 	if err != nil {
+		observability.RecordMessageOperation("route", "routing_error", time.Since(start))
 		return err
 	}
 	if len(routes) == 0 {
+		observability.RecordMessageOperation("route", "no_routes", time.Since(start))
 		return errors.New("no routes available for message")
 	}
 
@@ -167,15 +171,18 @@ func (e *MessageEngine) routeMessage(ctx context.Context, msg *model.Message) er
 	}
 
 	if publishErr != nil {
+		observability.RecordMessageOperation("route", "publish_error", time.Since(start))
 		return publishErr
 	}
 
 	if e.db != nil {
 		if err := e.db.UpdateMessageStatus(ctx, msg.ID, model.MessageStatusSent); err != nil {
+			observability.RecordMessageOperation("route", "status_update_error", time.Since(start))
 			return err
 		}
 	}
 
+	observability.RecordMessageOperation("route", "sent", time.Since(start))
 	return nil
 }
 
@@ -295,6 +302,7 @@ func (q *DeadLetterQueue) process(ctx context.Context) {
 }
 
 func (q *DeadLetterQueue) Enqueue(ctx context.Context, msg *model.Message, reason string) error {
+	start := time.Now()
 	data, _ := json.Marshal(map[string]interface{}{
 		"message": msg,
 		"reason":  reason,
@@ -312,14 +320,26 @@ func (q *DeadLetterQueue) Enqueue(ctx context.Context, msg *model.Message, reaso
 			Status:     model.DeadLetterStatusPending,
 			CreatedAt:  time.Now(),
 		}
-		return q.db.CreateDeadLetterEntry(ctx, entry)
+		err := q.db.CreateDeadLetterEntry(ctx, entry)
+		if err != nil {
+			observability.RecordMessageOperation("dlq_enqueue", "db_error", time.Since(start))
+			return err
+		}
+		observability.RecordMessageOperation("dlq_enqueue", "persisted", time.Since(start))
+		return nil
 	}
 
 	if q.redis == nil {
+		observability.RecordMessageOperation("dlq_enqueue", "service_unavailable", time.Since(start))
 		return ErrEngineDependenciesNotConfigured
 	}
 
-	return q.redis.ZAdd(ctx, "dlq:pending", redis.Z{Score: float64(time.Now().Unix()), Member: string(data)})
+	if err := q.redis.ZAdd(ctx, "dlq:pending", redis.Z{Score: float64(time.Now().Unix()), Member: string(data)}); err != nil {
+		observability.RecordMessageOperation("dlq_enqueue", "redis_error", time.Since(start))
+		return err
+	}
+	observability.RecordMessageOperation("dlq_enqueue", "queued", time.Since(start))
+	return nil
 }
 
 func (q *DeadLetterQueue) retryEntry(ctx context.Context, entry model.DeadLetterEntry) {
@@ -348,6 +368,7 @@ func (q *DeadLetterQueue) retryEntry(ctx context.Context, entry model.DeadLetter
 		}
 		q.markEntry(ctx, entry, status, nextRetryCount)
 		slog.Error("Failed to retry dead letter message", "entry_id", entry.ID, "message_id", envelope.Message.ID, "error", err)
+		observability.RecordMessageOperation("dlq_retry", "retry_failed", 0)
 		return
 	}
 
@@ -355,6 +376,7 @@ func (q *DeadLetterQueue) retryEntry(ctx context.Context, entry model.DeadLetter
 		_ = q.db.UpdateMessageStatus(ctx, envelope.Message.ID, model.MessageStatusSent)
 	}
 	q.markEntry(ctx, entry, model.DeadLetterStatusProcessed, entry.RetryCount+1)
+	observability.RecordMessageOperation("dlq_retry", "retry_succeeded", 0)
 }
 
 func (q *DeadLetterQueue) publishMessage(ctx context.Context, msg *model.Message) error {

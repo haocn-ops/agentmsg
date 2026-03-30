@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"agentmsg/internal/model"
+	"agentmsg/internal/observability"
 	"agentmsg/internal/repository"
 )
 
@@ -128,10 +129,13 @@ func NewMessageService(repo *repository.MessageRepository, ackRepo *repository.A
 }
 
 func (s *MessageService) Send(ctx context.Context, msg *model.Message) (*model.SendResult, error) {
+	start := time.Now()
 	if s == nil || s.repo == nil || s.redis == nil {
+		observability.RecordMessageOperation("send", "service_unavailable", time.Since(start))
 		return nil, ErrServiceUnavailable
 	}
 	if msg == nil || len(msg.RecipientIDs) == 0 || len(msg.Content) == 0 {
+		observability.RecordMessageOperation("send", "invalid_message", time.Since(start))
 		return nil, ErrInvalidMessage
 	}
 
@@ -156,21 +160,27 @@ func (s *MessageService) Send(ctx context.Context, msg *model.Message) (*model.S
 	msg.ContentSize = len(msg.Content)
 
 	if err := msg.SetRecipients(); err != nil {
+		observability.RecordMessageOperation("send", "recipient_encode_error", time.Since(start))
 		return nil, err
 	}
 
 	if err := s.repo.Create(ctx, msg); err != nil {
+		observability.RecordMessageOperation("send", "db_error", time.Since(start))
 		return nil, err
 	}
 
 	payload, err := json.Marshal(msg)
 	if err != nil {
+		observability.RecordMessageOperation("send", "marshal_error", time.Since(start))
 		return nil, err
 	}
 
 	if err := s.redis.LPush(ctx, "message:pending", string(payload)); err != nil {
+		observability.RecordMessageOperation("send", "queue_error", time.Since(start))
 		return nil, err
 	}
+
+	observability.RecordMessageOperation("send", "queued", time.Since(start))
 
 	return &model.SendResult{
 		MessageID: msg.ID,
@@ -186,21 +196,27 @@ func (s *MessageService) GetByID(ctx context.Context, id uuid.UUID) (*model.Mess
 }
 
 func (s *MessageService) Acknowledge(ctx context.Context, ack *model.Acknowledgement) error {
+	start := time.Now()
 	if s == nil || s.repo == nil || s.ackRepo == nil {
+		observability.RecordMessageOperation("ack", "service_unavailable", time.Since(start))
 		return ErrServiceUnavailable
 	}
 	if ack == nil {
+		observability.RecordMessageOperation("ack", "invalid_message", time.Since(start))
 		return ErrInvalidMessage
 	}
 	if ack.MessageID == uuid.Nil || ack.AgentID == uuid.Nil || ack.Status == "" {
+		observability.RecordMessageOperation("ack", "invalid_message", time.Since(start))
 		return ErrInvalidMessage
 	}
 
 	msg, err := s.repo.GetByID(ctx, ack.MessageID)
 	if err != nil {
+		observability.RecordMessageOperation("ack", "lookup_error", time.Since(start))
 		return err
 	}
 	if msg == nil {
+		observability.RecordMessageOperation("ack", "message_not_found", time.Since(start))
 		return ErrInvalidMessage
 	}
 
@@ -215,10 +231,17 @@ func (s *MessageService) Acknowledge(ctx context.Context, ack *model.Acknowledge
 	}
 
 	if err := s.ackRepo.Create(ctx, ack); err != nil {
+		observability.RecordMessageOperation("ack", "persist_error", time.Since(start))
 		return err
 	}
 
-	return s.repo.UpdateStatus(ctx, ack.MessageID, mapAckToMessageStatus(ack.Status))
+	if err := s.repo.UpdateStatus(ctx, ack.MessageID, mapAckToMessageStatus(ack.Status)); err != nil {
+		observability.RecordMessageOperation("ack", "status_update_error", time.Since(start))
+		return err
+	}
+
+	observability.RecordMessageOperation("ack", string(ack.Status), time.Since(start))
+	return nil
 }
 
 func (s *MessageService) ListByConversation(ctx context.Context, conversationID uuid.UUID, limit int) ([]model.Message, error) {

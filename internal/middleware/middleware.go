@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"agentmsg/internal/model"
+	"agentmsg/internal/observability"
 	"agentmsg/internal/repository"
 	"agentmsg/internal/service"
 )
@@ -65,6 +66,7 @@ func (m *Middleware) Authenticate() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
+			observability.RecordAuthFailure("missing_header")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
 			c.Abort()
 			return
@@ -72,12 +74,14 @@ func (m *Middleware) Authenticate() gin.HandlerFunc {
 
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		if token == authHeader {
+			observability.RecordAuthFailure("invalid_format")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization format"})
 			c.Abort()
 			return
 		}
 
 		if m.auth == nil {
+			observability.RecordAuthFailure("service_unavailable")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication service unavailable"})
 			c.Abort()
 			return
@@ -85,6 +89,7 @@ func (m *Middleware) Authenticate() gin.HandlerFunc {
 
 		claims, err := m.auth.ValidateToken(token)
 		if err != nil {
+			observability.RecordAuthFailure("invalid_token")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			c.Abort()
 			return
@@ -142,6 +147,7 @@ func (m *Middleware) RateLimit() gin.HandlerFunc {
 		c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
 
 		if int(count) > m.rateLimitRequests {
+			observability.RecordRateLimitExceeded(c.FullPath())
 			c.Header("Retry-After", strconv.Itoa(windowSeconds))
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":       "rate limit exceeded",
@@ -176,6 +182,7 @@ func (m *Middleware) Logging() gin.HandlerFunc {
 			"agent_id", c.GetString("agent_id"),
 			"tenant_id", c.GetString("tenant_id"),
 		)
+		observability.RecordAPIRequest(c.Request.Method, path, c.Writer.Status(), time.Since(start))
 	}
 }
 
@@ -217,7 +224,10 @@ func (m *Middleware) AuditLog() gin.HandlerFunc {
 
 		if err := m.db.CreateAuditLog(c.Request.Context(), entry); err != nil {
 			slog.Error("failed to persist audit log", "request_id", entry.RequestID, "error", err)
+			observability.RecordAuditLog(entry.Action, http.StatusInternalServerError)
+			return
 		}
+		observability.RecordAuditLog(entry.Action, entry.StatusCode)
 	}
 }
 
