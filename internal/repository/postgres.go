@@ -113,6 +113,22 @@ func (p *PostgresDB) UpdateDeadLetterEntry(ctx context.Context, id uuid.UUID, st
 	return err
 }
 
+func (p *PostgresDB) CreateAuditLog(ctx context.Context, entry *model.AuditLog) error {
+	query := `
+		INSERT INTO audit_logs (
+			id, tenant_id, agent_id, request_id, trace_id, action, resource_type, resource_id,
+			method, path, status_code, client_ip, user_agent, metadata, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+	`
+	_, err := p.db.ExecContext(ctx, query,
+		entry.ID, entry.TenantID, entry.AgentID, entry.RequestID, entry.TraceID, entry.Action,
+		entry.ResourceType, entry.ResourceID, entry.Method, entry.Path, entry.StatusCode,
+		entry.ClientIP, entry.UserAgent, entry.Metadata, entry.CreatedAt,
+	)
+	return err
+}
+
 func NewPostgresDB(dsn string) (*PostgresDB, error) {
 	db, err := sqlx.Connect("postgres", dsn)
 	if err != nil {

@@ -64,7 +64,7 @@ func main() {
 		AuthService:    authService,
 		Database:       db,
 		Redis:          redisClient,
-		Middleware:     middleware.NewMiddleware(redisClient, authService, cfg.RateLimitRequests, cfg.RateLimitWindow),
+		Middleware:     middleware.NewMiddleware(redisClient, db, authService, cfg.RateLimitRequests, cfg.RateLimitWindow),
 	})
 
 	go func() {

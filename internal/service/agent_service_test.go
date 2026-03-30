@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -80,6 +81,7 @@ func TestAuthServiceGenerateToken(t *testing.T) {
 	token, err := svc.GenerateToken(agentID, tenantID)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, token)
+	assert.Equal(t, 2, strings.Count(token, "."))
 }
 
 func TestAuthServiceValidateToken(t *testing.T) {

@@ -26,7 +26,7 @@ func (s *Server) sendBatchMessages(c *gin.Context) {
 
 	results := make([]model.SendResult, 0, len(req.Messages))
 	for _, msgReq := range req.Messages {
-		msg, err := buildMessageFromRequest(senderID, tenantID, msgReq)
+		msg, err := buildMessageFromRequest(senderID, tenantID, c.GetString("trace_id"), msgReq)
 		if err != nil {
 			results = append(results, model.SendResult{
 				Status: "error: " + err.Error(),

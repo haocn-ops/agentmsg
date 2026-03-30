@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 
@@ -233,6 +232,19 @@ type AuthService struct {
 	jwtSecret []byte
 }
 
+type jwtHeader struct {
+	Alg string `json:"alg"`
+	Typ string `json:"typ"`
+}
+
+type jwtClaims struct {
+	Sub      string `json:"sub"`
+	AgentID  string `json:"agent_id"`
+	TenantID string `json:"tenant_id"`
+	IssuedAt int64  `json:"iat"`
+	ExpiresAt int64 `json:"exp"`
+}
+
 func NewAuthService(jwtSecret string) *AuthService {
 	return &AuthService{jwtSecret: []byte(jwtSecret)}
 }
@@ -242,22 +254,36 @@ func (s *AuthService) GenerateToken(agentID uuid.UUID, tenantID uuid.UUID) (stri
 		return "", ErrServiceUnavailable
 	}
 
-	expiresAt := time.Now().Add(24 * time.Hour).Unix()
-	payload := strings.Join([]string{
-		agentID.String(),
-		tenantID.String(),
-		strconv.FormatInt(expiresAt, 10),
-	}, ".")
-
-	mac := hmac.New(sha256.New, s.jwtSecret)
-	if _, err := mac.Write([]byte(payload)); err != nil {
+	now := time.Now().Unix()
+	headerBytes, err := json.Marshal(jwtHeader{
+		Alg: "HS256",
+		Typ: "JWT",
+	})
+	if err != nil {
 		return "", err
 	}
 
-	encodedPayload := base64.RawURLEncoding.EncodeToString([]byte(payload))
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	claimsBytes, err := json.Marshal(jwtClaims{
+		Sub:       agentID.String(),
+		AgentID:   agentID.String(),
+		TenantID:  tenantID.String(),
+		IssuedAt:  now,
+		ExpiresAt: now + int64((24 * time.Hour).Seconds()),
+	})
+	if err != nil {
+		return "", err
+	}
 
-	return encodedPayload + "." + signature, nil
+	encodedHeader := base64.RawURLEncoding.EncodeToString(headerBytes)
+	encodedClaims := base64.RawURLEncoding.EncodeToString(claimsBytes)
+	signingInput := encodedHeader + "." + encodedClaims
+
+	signature, err := s.signJWT(signingInput)
+	if err != nil {
+		return "", err
+	}
+
+	return signingInput + "." + signature, nil
 }
 
 func (s *AuthService) ValidateToken(token string) (*model.TokenClaims, error) {
@@ -266,53 +292,69 @@ func (s *AuthService) ValidateToken(token string) (*model.TokenClaims, error) {
 	}
 
 	parts := strings.Split(token, ".")
-	if len(parts) != 2 {
+	if len(parts) != 3 {
 		return nil, ErrInvalidToken
 	}
 
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
 		return nil, ErrInvalidToken
 	}
 
-	expectedMAC := hmac.New(sha256.New, s.jwtSecret)
-	if _, err := expectedMAC.Write(payloadBytes); err != nil {
+	var header jwtHeader
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return nil, ErrInvalidToken
+	}
+	if header.Alg != "HS256" || header.Typ != "JWT" {
+		return nil, ErrInvalidToken
+	}
+
+	claimsBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+
+	expectedSignature, err := s.signJWT(parts[0] + "." + parts[1])
+	if err != nil {
 		return nil, err
 	}
+	if !hmac.Equal([]byte(parts[2]), []byte(expectedSignature)) {
+		return nil, ErrInvalidToken
+	}
 
-	signatureBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	var claims jwtClaims
+	if err := json.Unmarshal(claimsBytes, &claims); err != nil {
+		return nil, ErrInvalidToken
+	}
+
+	agentID, err := uuid.Parse(claims.AgentID)
 	if err != nil {
 		return nil, ErrInvalidToken
 	}
 
-	if !hmac.Equal(signatureBytes, expectedMAC.Sum(nil)) {
-		return nil, ErrInvalidToken
-	}
-
-	fields := strings.Split(string(payloadBytes), ".")
-	if len(fields) != 3 {
-		return nil, ErrInvalidToken
-	}
-
-	agentID, err := uuid.Parse(fields[0])
+	tenantID, err := uuid.Parse(claims.TenantID)
 	if err != nil {
 		return nil, ErrInvalidToken
 	}
 
-	tenantID, err := uuid.Parse(fields[1])
-	if err != nil {
-		return nil, ErrInvalidToken
-	}
-
-	expiresAt, err := strconv.ParseInt(fields[2], 10, 64)
-	if err != nil || time.Now().Unix() > expiresAt {
+	if claims.ExpiresAt == 0 || time.Now().Unix() > claims.ExpiresAt {
 		return nil, ErrInvalidToken
 	}
 
 	return &model.TokenClaims{
-		AgentID:  agentID,
-		TenantID: tenantID,
+		AgentID:   agentID,
+		TenantID:  tenantID,
+		IssuedAt:  claims.IssuedAt,
+		ExpiresAt: claims.ExpiresAt,
 	}, nil
+}
+
+func (s *AuthService) signJWT(signingInput string) (string, error) {
+	mac := hmac.New(sha256.New, s.jwtSecret)
+	if _, err := mac.Write([]byte(signingInput)); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
 func mapAckToMessageStatus(status model.AckStatus) model.MessageStatus {

@@ -41,7 +41,7 @@ type Dependencies struct {
 func NewServer(cfg *ServerConfig, deps *Dependencies) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
-	router.Use(gin.Recovery())
+	router.Use(gin.Recovery(), deps.Middleware.Tracing(), deps.Middleware.Logging())
 
 	s := &Server{
 		config: cfg,
@@ -65,7 +65,7 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	v1 := r.Group("/api/v1")
-	v1.Use(s.deps.Middleware.Authenticate(), s.deps.Middleware.RateLimit())
+	v1.Use(s.deps.Middleware.Authenticate(), s.deps.Middleware.RateLimit(), s.deps.Middleware.AuditLog())
 	{
 		agents := v1.Group("/agents")
 		{
@@ -254,7 +254,7 @@ type MessageRequest struct {
 	TaskContext   *model.TaskContext     `json:"taskContext,omitempty"`
 }
 
-func buildMessageFromRequest(senderID, tenantID uuid.UUID, req MessageRequest) (*model.Message, error) {
+func buildMessageFromRequest(senderID, tenantID uuid.UUID, traceID string, req MessageRequest) (*model.Message, error) {
 	content, contentType, err := serializeContent(req.Content)
 	if err != nil {
 		return nil, err
@@ -276,6 +276,7 @@ func buildMessageFromRequest(senderID, tenantID uuid.UUID, req MessageRequest) (
 		DeliveryGuarantee:  deliveryGuarantee,
 		Metadata:           model.MessageMetadata{Custom: req.Metadata},
 		TaskContext:        req.TaskContext,
+		TraceID:            traceID,
 		TenantID:           tenantID,
 	}, nil
 }
@@ -309,7 +310,7 @@ func (s *Server) sendMessage(c *gin.Context) {
 	senderID := uuid.MustParse(c.GetString("agent_id"))
 	tenantID := uuid.MustParse(c.GetString("tenant_id"))
 
-	msg, err := buildMessageFromRequest(senderID, tenantID, req)
+	msg, err := buildMessageFromRequest(senderID, tenantID, c.GetString("trace_id"), req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

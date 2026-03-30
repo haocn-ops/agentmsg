@@ -9,8 +9,10 @@ type SendResult struct {
 }
 
 type TokenClaims struct {
-	AgentID  uuid.UUID
-	TenantID uuid.UUID
+	AgentID   uuid.UUID
+	TenantID  uuid.UUID
+	IssuedAt  int64
+	ExpiresAt int64
 }
 
 type Tenant struct {
