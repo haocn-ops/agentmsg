@@ -9,6 +9,7 @@ on:
 env:
   GO_VERSION: '1.21'
   PYTHON_VERSION: '3.11'
+  NODE_VERSION: '20'
   DOCKER_IMAGE: agentmsg
 
 jobs:
@@ -30,9 +31,21 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: sdk/nodejs/package-lock.json
+
       - name: Install Python SDK dependencies
         run: |
           python3 -m pip install -r sdk/python/requirements.txt
+
+      - name: Install Node.js SDK dependencies
+        run: |
+          cd sdk/nodejs
+          npm ci
 
       - name: Run golangci-lint
         run: |
@@ -77,6 +90,18 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: sdk/nodejs/package-lock.json
+
+      - name: Install Node.js SDK dependencies
+        run: |
+          cd sdk/nodejs
+          npm ci
+
       - name: Run tests
         env:
           DATABASE_URL: postgres://agentmsg:agentmsg@localhost:5432/agentmsg_test?sslmode=disable
@@ -92,6 +117,11 @@ jobs:
       - name: Run Python SDK tests
         run: |
           PYTHONPATH=sdk/python python3 -m unittest discover -s sdk/python/tests
+
+      - name: Run Node.js SDK tests
+        run: |
+          cd sdk/nodejs
+          npm test
 
       - name: Upload coverage
         uses: codecov/codecov-action@v3
