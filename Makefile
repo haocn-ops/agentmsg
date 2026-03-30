@@ -149,12 +149,12 @@ k8s-delete:
 
 # Helm deployment
 helm-install:
-	@echo "Installing Helm chart..."
-	helm install agentmsg deployments/helm/agentmsg
+	@echo "Helm chart is not packaged in this repository."
+	@echo "Use 'make k8s-deploy' with deployments/k8s/ or add a chart before using Helm."
 
 helm-upgrade:
-	@echo "Upgrading Helm chart..."
-	helm upgrade agentmsg deployments/helm/agentmsg
+	@echo "Helm chart is not packaged in this repository."
+	@echo "Use 'make k8s-deploy' with deployments/k8s/ or add a chart before using Helm."
 
 # Version info
 version:

@@ -3,12 +3,14 @@ kind: ServiceAccount
 metadata:
   name: api-gateway
   namespace: agentmsg
+automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: message-engine
   namespace: agentmsg
+automountServiceAccountToken: false
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

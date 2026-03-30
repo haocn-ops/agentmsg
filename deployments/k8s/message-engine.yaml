@@ -8,6 +8,14 @@ metadata:
     tier: core
 spec:
   replicas: 6
+  revisionHistoryLimit: 5
+  minReadySeconds: 10
+  progressDeadlineSeconds: 600
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
   selector:
     matchLabels:
       app: message-engine
@@ -22,6 +30,15 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: message-engine
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: engine
           image: agentmsg/message-engine:latest
@@ -38,6 +55,16 @@ spec:
               value: "false"
             - name: OTEL_ENABLED
               value: "true"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: agentmsg-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+            - name: OTEL_INSECURE
+              valueFrom:
+                configMapKeyRef:
+                  name: agentmsg-config
+                  key: OTEL_INSECURE
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -48,6 +75,12 @@ spec:
                 secretKeyRef:
                   name: agentmsg-secrets
                   key: REDIS_URL
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           resources:
             requests:
               cpu: 1000m
@@ -67,6 +100,12 @@ spec:
               port: 8081
             initialDelaySeconds: 10
             periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: 8081
+            periodSeconds: 5
+            failureThreshold: 30
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -118,3 +157,14 @@ spec:
         target:
           type: AverageValue
           averageValue: "1000"
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: message-engine-pdb
+  namespace: agentmsg
+spec:
+  minAvailable: 4
+  selector:
+    matchLabels:
+      app: message-engine

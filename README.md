@@ -227,6 +227,8 @@ kubectl apply -f deployments/k8s/
 kubectl get pods -n agentmsg
 ```
 
+Operational rollout notes live in [`docs/operations.md`](docs/operations.md).
+
 ### Configuration
 
 Environment variables:
