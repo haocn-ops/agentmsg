@@ -10,10 +10,7 @@
 ## Kubernetes Rollout
 
 ```bash
-kubectl apply -f deployments/k8s/namespace.yaml
-kubectl apply -f deployments/k8s/api-gateway.yaml
-kubectl apply -f deployments/k8s/message-engine.yaml
-kubectl apply -f deployments/k8s/ingress.yaml
+kubectl apply -k deployments/k8s
 ```
 
 The manifests now include:
@@ -22,6 +19,20 @@ The manifests now include:
 - Pod disruption budgets
 - Startup, readiness, and liveness probes
 - Non-root runtime and restricted container security settings
+- A `kustomize` entrypoint for consistent rollout order
+- Baseline `NetworkPolicy` objects
+
+If you use the bundled `allow-api-gateway-ingress` policy, label the ingress controller namespace with:
+
+```bash
+kubectl label namespace ingress-nginx agentmsg.ingress-access=true
+```
+
+If Prometheus runs outside the `agentmsg` namespace, label its namespace too:
+
+```bash
+kubectl label namespace monitoring agentmsg.metrics-access=true
+```
 
 ## Preflight Checks
 

@@ -32,7 +32,6 @@ func runExactlyOnceExample() error {
 		AgentID:  agentID,
 		TenantID: tenantID,
 		BaseURL:  "http://localhost:8080",
-		WSURL:    "ws://localhost:8080",
 		Timeout:  30 * time.Second,
 	}
 
@@ -47,6 +46,8 @@ func runExactlyOnceExample() error {
 	}
 	defer client.Disconnect()
 
+	log.Println("Exactly-once delivery currently uses the REST send path; realtime receive is not exposed by the server build yet.")
+
 	sendMessageWithIdempotency(ctx, client, "This message will be delivered exactly once")
 	sendMessageWithIdempotency(ctx, client, "This message will be delivered exactly once")
 	sendMessageWithIdempotency(ctx, client, "This message will be delivered exactly once")
@@ -57,11 +58,11 @@ func runExactlyOnceExample() error {
 
 func sendMessageWithIdempotency(ctx context.Context, client *agentmsg.Client, content string) {
 	msg := &agentmsg.Message{
-		ConversationID:   uuid.New(),
-		MessageType:      agentmsg.MessageTypeGeneric,
-		RecipientIDs:    []uuid.UUID{uuid.New()},
-		Content:         []byte(content),
-		ContentType:     "text/plain",
+		ConversationID:    uuid.New(),
+		MessageType:       agentmsg.MessageTypeGeneric,
+		RecipientIDs:      []uuid.UUID{uuid.New()},
+		Content:           []byte(content),
+		ContentType:       "text/plain",
 		DeliveryGuarantee: agentmsg.DeliveryExactlyOnce,
 	}
 

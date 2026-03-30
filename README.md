@@ -216,8 +216,7 @@ The SDK folders still contain experimental client-side WebSocket code, but `/api
 
 ```bash
 # Apply Kubernetes manifests
-kubectl apply -f deployments/k8s/namespace.yaml
-kubectl apply -f deployments/k8s/
+kubectl apply -k deployments/k8s
 
 # Check status
 kubectl get pods -n agentmsg

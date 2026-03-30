@@ -32,9 +32,7 @@ func run() error {
 		AgentID:   agentID,
 		TenantID:  tenantID,
 		BaseURL:   "http://localhost:8080",
-		WSURL:     "ws://localhost:8080",
 		Timeout:   30 * time.Second,
-		OnMessage: handleMessage,
 		OnConnect: func() { fmt.Println("Connected!") },
 		OnError:   func(err error) { fmt.Printf("Error: %v\n", err) },
 	}
@@ -64,7 +62,7 @@ func run() error {
 	}
 
 	if err := client.RegisterAgent(ctx, agent); err != nil {
-		log.Printf("Failed to register agent: %v", err)
+		log.Printf("Agent registration may require a tenant-scoped JWT with create permissions: %v", err)
 	}
 
 	agents, err := client.ListAgents(ctx)
@@ -74,11 +72,11 @@ func run() error {
 	fmt.Printf("Found %d agents\n", len(agents))
 
 	msg := &agentmsg.Message{
-		ConversationID: uuid.New(),
-		MessageType:   agentmsg.MessageTypeGeneric,
-		RecipientIDs:  []uuid.UUID{agentID},
-		Content:       []byte("Hello, World!"),
-		ContentType:   "text/plain",
+		ConversationID:    uuid.New(),
+		MessageType:       agentmsg.MessageTypeGeneric,
+		RecipientIDs:      []uuid.UUID{agentID},
+		Content:           []byte("Hello, World!"),
+		ContentType:       "text/plain",
 		DeliveryGuarantee: agentmsg.DeliveryAtLeastOnce,
 	}
 
@@ -87,11 +85,5 @@ func run() error {
 		return fmt.Errorf("failed to send message: %w", err)
 	}
 	fmt.Printf("Message sent: %s, status: %s\n", result.MessageID, result.Status)
-
-	time.Sleep(5 * time.Second)
 	return nil
-}
-
-func handleMessage(msg *agentmsg.Message) {
-	fmt.Printf("Received message from %s: %s\n", msg.SenderID, string(msg.Content))
 }

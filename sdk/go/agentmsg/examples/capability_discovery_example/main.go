@@ -32,7 +32,6 @@ func runCapabilityDiscoveryExample() error {
 		AgentID:  agentID,
 		TenantID: tenantID,
 		BaseURL:  "http://localhost:8080",
-		WSURL:    "ws://localhost:8080",
 		Timeout:  30 * time.Second,
 	}
 

@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,76 +15,62 @@ import (
 type Client struct {
 	config     *ClientConfig
 	httpClient *http.Client
-	ws         *WebSocketClient
-	mu         sync.RWMutex
-	agents     map[uuid.UUID]*Agent
-	ctx        context.Context
-	cancel     context.CancelFunc
 }
 
 type ClientConfig struct {
-	APIKey        string
-	AgentID       uuid.UUID
-	TenantID      uuid.UUID
-	BaseURL       string
-	WSURL         string
-	Timeout       time.Duration
-	OnMessage     func(*Message)
-	OnError       func(error)
-	OnConnect     func()
-	OnDisconnect  func()
+	APIKey       string
+	AgentID      uuid.UUID
+	TenantID     uuid.UUID
+	BaseURL      string
+	WSURL        string
+	Timeout      time.Duration
+	OnMessage    func(*Message)
+	OnError      func(error)
+	OnConnect    func()
+	OnDisconnect func()
 }
 
 func NewClient(config *ClientConfig) (*Client, error) {
+	if config == nil {
+		return nil, ErrInvalidConfig
+	}
 	if config.BaseURL == "" {
 		config.BaseURL = "https://api.agentmsg.cloud"
-	}
-	if config.WSURL == "" {
-		config.WSURL = "wss://ws.agentmsg.cloud"
 	}
 	if config.Timeout == 0 {
 		config.Timeout = 30 * time.Second
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	return &Client{
 		config:     config,
 		httpClient: &http.Client{Timeout: config.Timeout},
-		ws:         NewWebSocketClient(config),
-		agents:     make(map[uuid.UUID]*Agent),
-		ctx:        ctx,
-		cancel:     cancel,
 	}, nil
 }
 
 func (c *Client) Connect(ctx context.Context) error {
-	if err := c.ws.Connect(ctx); err != nil {
-		return fmt.Errorf("websocket connection failed: %w", err)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.config.BaseURL+"/health", nil)
+	if err != nil {
+		return err
 	}
-
-	c.ws.OnMessage(func(msg *WSMessage) {
-		c.handleWSMessage(msg)
-	})
-
-	c.ws.OnConnect(func() {
-		if c.config.OnConnect != nil {
-			c.config.OnConnect()
-		}
-	})
-
-	c.ws.OnDisconnect(func() {
-		if c.config.OnDisconnect != nil {
-			c.config.OnDisconnect()
-		}
-	})
-
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("health check failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("health check failed with status: %d", resp.StatusCode)
+	}
+	if c.config.OnConnect != nil {
+		c.config.OnConnect()
+	}
 	return nil
 }
 
 func (c *Client) Disconnect() error {
-	c.cancel()
-	return c.ws.Close()
+	if c.config.OnDisconnect != nil {
+		c.config.OnDisconnect()
+	}
+	return nil
 }
 
 func (c *Client) RegisterAgent(ctx context.Context, agent *Agent) error {
@@ -107,10 +93,42 @@ func (c *Client) RegisterAgent(ctx context.Context, agent *Agent) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("registration failed with status: %d", resp.StatusCode)
+		return decodeAPIError(resp)
 	}
 
 	return json.NewDecoder(resp.Body).Decode(agent)
+}
+
+func (c *Client) UpdateAgentCapabilities(ctx context.Context, capabilities Capabilities) (*Agent, error) {
+	body, err := json.Marshal(map[string]any{
+		"capabilities": capabilities,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.config.BaseURL+"/api/v1/agents/"+c.config.AgentID.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, decodeAPIError(resp)
+	}
+
+	var agent Agent
+	if err := json.NewDecoder(resp.Body).Decode(&agent); err != nil {
+		return nil, err
+	}
+	return &agent, nil
 }
 
 func (c *Client) GetAgent(ctx context.Context, agentID uuid.UUID) (*Agent, error) {
@@ -128,6 +146,9 @@ func (c *Client) GetAgent(ctx context.Context, agentID uuid.UUID) (*Agent, error
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, ErrAgentNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, decodeAPIError(resp)
 	}
 
 	var agent Agent
@@ -150,6 +171,9 @@ func (c *Client) ListAgents(ctx context.Context) ([]Agent, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, decodeAPIError(resp)
+	}
 
 	var agents []Agent
 	if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
@@ -160,7 +184,14 @@ func (c *Client) ListAgents(ctx context.Context) ([]Agent, error) {
 }
 
 func (c *Client) SendMessage(ctx context.Context, msg *Message) (*SendResult, error) {
+	if msg == nil {
+		return nil, ErrInvalidConfig
+	}
 	msg.SenderID = c.config.AgentID
+	msg.TenantID = c.config.TenantID
+	if msg.ConversationID == uuid.Nil {
+		msg.ConversationID = uuid.New()
+	}
 
 	body, err := json.Marshal(msg)
 	if err != nil {
@@ -181,7 +212,7 @@ func (c *Client) SendMessage(ctx context.Context, msg *Message) (*SendResult, er
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("send failed with status: %d", resp.StatusCode)
+		return nil, decodeAPIError(resp)
 	}
 
 	var result SendResult
@@ -210,6 +241,9 @@ func (c *Client) SendBatchMessages(ctx context.Context, messages []*Message) ([]
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return nil, decodeAPIError(resp)
+	}
 
 	var result struct {
 		Results []SendResult `json:"results"`
@@ -236,6 +270,9 @@ func (c *Client) GetMessage(ctx context.Context, messageID uuid.UUID) (*Message,
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, ErrMessageNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, decodeAPIError(resp)
 	}
 
 	var msg Message
@@ -266,7 +303,7 @@ func (c *Client) AcknowledgeMessage(ctx context.Context, messageID uuid.UUID, st
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ack failed with status: %d", resp.StatusCode)
+		return decodeAPIError(resp)
 	}
 
 	return nil
@@ -292,7 +329,7 @@ func (c *Client) CreateSubscription(ctx context.Context, sub *Subscription) erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("subscription creation failed with status: %d", resp.StatusCode)
+		return decodeAPIError(resp)
 	}
 
 	return nil
@@ -310,6 +347,9 @@ func (c *Client) ListSubscriptions(ctx context.Context) ([]Subscription, error) 
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, decodeAPIError(resp)
+	}
 
 	var result struct {
 		Subscriptions []Subscription `json:"subscriptions"`
@@ -335,7 +375,7 @@ func (c *Client) DeleteSubscription(ctx context.Context, subscriptionID uuid.UUI
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("delete subscription failed with status: %d", resp.StatusCode)
+		return decodeAPIError(resp)
 	}
 
 	return nil
@@ -359,6 +399,9 @@ func (c *Client) QueryCapabilities(ctx context.Context, capabilities []string) (
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, decodeAPIError(resp)
+	}
 
 	var result struct {
 		Agents []Agent `json:"agents"`
@@ -382,29 +425,39 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return decodeAPIError(resp)
+	}
 
 	return nil
 }
 
-func (c *Client) handleWSMessage(msg *WSMessage) {
-	switch msg.Type {
-	case "message":
-		var message Message
-		if err := json.Unmarshal(msg.Data, &message); err != nil {
-			if c.config.OnError != nil {
-				c.config.OnError(err)
-			}
-			return
-		}
-		if c.config.OnMessage != nil {
-			c.config.OnMessage(&message)
-		}
-	case "ack":
-		var ack Ack
-		if err := json.Unmarshal(msg.Data, &ack); err != nil {
-			if c.config.OnError != nil {
-				c.config.OnError(err)
-			}
-		}
+type apiErrorEnvelope struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func decodeAPIError(resp *http.Response) error {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("request failed with status: %d", resp.StatusCode)
 	}
+
+	var envelope apiErrorEnvelope
+	if err := json.Unmarshal(body, &envelope); err == nil && envelope.Error.Message != "" {
+		switch resp.StatusCode {
+		case http.StatusNotFound:
+			if envelope.Error.Code == "agent_not_found" {
+				return ErrAgentNotFound
+			}
+			if envelope.Error.Code == "message_not_found" {
+				return ErrMessageNotFound
+			}
+		}
+		return fmt.Errorf("%s: %s", envelope.Error.Code, envelope.Error.Message)
+	}
+
+	return fmt.Errorf("request failed with status: %d", resp.StatusCode)
 }

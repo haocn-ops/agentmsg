@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -12,15 +13,15 @@ import (
 )
 
 type WebSocketClient struct {
-	config     *ClientConfig
-	conn       *websocket.Conn
-	mu         sync.RWMutex
-	sendCh     chan []byte
-	recvCh     chan *WSMessage
-	doneCh     chan struct{}
-	reconnect  bool
-	maxRetries int
-	retries    int
+	config          *ClientConfig
+	conn            *websocket.Conn
+	mu              sync.RWMutex
+	sendCh          chan []byte
+	recvCh          chan *WSMessage
+	doneCh          chan struct{}
+	shouldReconnect bool
+	maxRetries      int
+	retries         int
 }
 
 type WSMessage struct {
@@ -40,8 +41,8 @@ func NewWebSocketClient(config *ClientConfig) *WebSocketClient {
 }
 
 func (c *WebSocketClient) Connect(ctx context.Context) error {
-	header := make(map[string]string)
-	header["Authorization"] = "Bearer " + c.config.APIKey
+	header := make(http.Header)
+	header.Set("Authorization", "Bearer "+c.config.APIKey)
 
 	u := fmt.Sprintf("%s/ws?agent_id=%s&tenant_id=%s",
 		c.config.WSURL,
@@ -54,7 +55,7 @@ func (c *WebSocketClient) Connect(ctx context.Context) error {
 	}
 
 	c.conn = conn
-	c.reconnect = true
+	c.shouldReconnect = true
 	c.retries = 0
 
 	go c.readLoop()
@@ -65,7 +66,7 @@ func (c *WebSocketClient) Connect(ctx context.Context) error {
 
 func (c *WebSocketClient) Close() error {
 	c.mu.Lock()
-	c.reconnect = false
+	c.shouldReconnect = false
 	c.mu.Unlock()
 
 	close(c.doneCh)
@@ -100,8 +101,8 @@ func (c *WebSocketClient) readLoop() {
 		default:
 			_, data, err := c.conn.ReadMessage()
 			if err != nil {
-				if c.shouldReconnect() {
-					c.reconnect()
+				if c.canReconnect() {
+					c.reconnectLoop()
 					continue
 				}
 				return
@@ -134,13 +135,13 @@ func (c *WebSocketClient) writeLoop() {
 	}
 }
 
-func (c *WebSocketClient) shouldReconnect() bool {
+func (c *WebSocketClient) canReconnect() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.reconnect && c.retries < c.maxRetries
+	return c.shouldReconnect && c.retries < c.maxRetries
 }
 
-func (c *WebSocketClient) reconnect() {
+func (c *WebSocketClient) reconnectLoop() {
 	c.mu.Lock()
 	c.retries++
 	c.mu.Unlock()
