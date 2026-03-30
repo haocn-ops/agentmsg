@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -54,6 +55,62 @@ func (p *PostgresDB) GetAcknowledgement(ctx context.Context, messageID uuid.UUID
 		return nil, err
 	}
 	return &ack, nil
+}
+
+func (p *PostgresDB) UpdateMessageStatus(ctx context.Context, id uuid.UUID, status model.MessageStatus) error {
+	query := `
+		UPDATE messages
+		SET
+			status = $2,
+			processed_at = CASE
+				WHEN $2 IN ('delivered', 'processed', 'failed', 'dead_letter') THEN NOW()
+				ELSE processed_at
+			END
+		WHERE id = $1
+	`
+	_, err := p.db.ExecContext(ctx, query, id, status)
+	return err
+}
+
+func (p *PostgresDB) CreateDeadLetterEntry(ctx context.Context, entry *model.DeadLetterEntry) error {
+	query := `
+		INSERT INTO dead_letter_queue (id, message_id, reason, retry_count, max_retries, payload, status, created_at, processed_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`
+	_, err := p.db.ExecContext(ctx, query,
+		entry.ID, entry.MessageID, entry.Reason, entry.RetryCount, entry.MaxRetries,
+		string(entry.Payload), entry.Status, entry.CreatedAt, entry.ProcessedAt,
+	)
+	return err
+}
+
+func (p *PostgresDB) ListRetryableDeadLetterEntries(ctx context.Context, limit int) ([]model.DeadLetterEntry, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	var entries []model.DeadLetterEntry
+	query := `
+		SELECT id, message_id, reason, retry_count, max_retries, payload, status, created_at, processed_at
+		FROM dead_letter_queue
+		WHERE status = 'pending' AND retry_count < max_retries
+		ORDER BY created_at ASC
+		LIMIT $1
+	`
+	if err := p.db.SelectContext(ctx, &entries, query, limit); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+func (p *PostgresDB) UpdateDeadLetterEntry(ctx context.Context, id uuid.UUID, status model.DeadLetterStatus, retryCount int, processedAt *time.Time) error {
+	query := `
+		UPDATE dead_letter_queue
+		SET status = $2, retry_count = $3, processed_at = $4
+		WHERE id = $1
+	`
+	_, err := p.db.ExecContext(ctx, query, id, status, retryCount, processedAt)
+	return err
 }
 
 func NewPostgresDB(dsn string) (*PostgresDB, error) {
@@ -239,7 +296,16 @@ func (r *MessageRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.M
 }
 
 func (r *MessageRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status model.MessageStatus) error {
-	query := `UPDATE messages SET status = $2, processed_at = NOW() WHERE id = $1`
+	query := `
+		UPDATE messages
+		SET
+			status = $2,
+			processed_at = CASE
+				WHEN $2 IN ('delivered', 'processed', 'failed', 'dead_letter') THEN NOW()
+				ELSE processed_at
+			END
+		WHERE id = $1
+	`
 	_, err := r.db.ExecContext(ctx, query, id, status)
 	return err
 }

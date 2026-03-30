@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -161,16 +162,18 @@ func (s *MessageService) Send(ctx context.Context, msg *model.Message) (*model.S
 		return nil, err
 	}
 
-	for _, recipientID := range msg.RecipientIDs {
-		channel := "agent:" + recipientID.String() + ":queue"
-		if err := s.redis.Publish(ctx, channel, msg.ID.String()); err != nil {
-			continue
-		}
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.redis.LPush(ctx, "message:pending", string(payload)); err != nil {
+		return nil, err
 	}
 
 	return &model.SendResult{
 		MessageID: msg.ID,
-		Status:    string(model.MessageStatusSent),
+		Status:    string(model.MessageStatusPending),
 	}, nil
 }
 

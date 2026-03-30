@@ -85,6 +85,14 @@ const (
 	MessageStatusDeadLetter MessageStatus = "dead_letter"
 )
 
+type DeadLetterStatus string
+
+const (
+	DeadLetterStatusPending   DeadLetterStatus = "pending"
+	DeadLetterStatusProcessed DeadLetterStatus = "processed"
+	DeadLetterStatusExhausted DeadLetterStatus = "exhausted"
+)
+
 type MessageMetadata struct {
 	Tags         map[string]string `json:"tags,omitempty"`
 	CorrelationID string           `json:"correlationId,omitempty"`
@@ -157,3 +165,15 @@ const (
 	AckStatusRejected AckStatus = "rejected"
 	AckStatusFailed   AckStatus = "failed"
 )
+
+type DeadLetterEntry struct {
+	ID         uuid.UUID        `json:"id" db:"id"`
+	MessageID  uuid.UUID        `json:"messageId" db:"message_id"`
+	Reason     string           `json:"reason" db:"reason"`
+	RetryCount int              `json:"retryCount" db:"retry_count"`
+	MaxRetries int              `json:"maxRetries" db:"max_retries"`
+	Payload    []byte           `json:"payload" db:"payload"`
+	Status     DeadLetterStatus `json:"status" db:"status"`
+	CreatedAt  time.Time        `json:"createdAt" db:"created_at"`
+	ProcessedAt *time.Time      `json:"processedAt,omitempty" db:"processed_at"`
+}

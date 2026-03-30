@@ -132,24 +132,51 @@ func (e *MessageEngine) processWorker() {
 				continue
 			}
 
-			e.routeMessage(&message)
+			if err := e.routeMessage(e.ctx, &message); err != nil {
+				slog.Error("Failed to route message", "message_id", message.ID, "error", err)
+				if e.db != nil {
+					_ = e.db.UpdateMessageStatus(e.ctx, message.ID, model.MessageStatusDeadLetter)
+				}
+				if dlqErr := e.dlq.Enqueue(e.ctx, &message, err.Error()); dlqErr != nil {
+					slog.Error("Failed to enqueue dead letter", "message_id", message.ID, "error", dlqErr)
+					if e.db != nil {
+						_ = e.db.UpdateMessageStatus(e.ctx, message.ID, model.MessageStatusFailed)
+					}
+				}
+			}
 		}
 	}
 }
 
-func (e *MessageEngine) routeMessage(msg *model.Message) {
+func (e *MessageEngine) routeMessage(ctx context.Context, msg *model.Message) error {
 	routes, err := e.router.Route(msg)
 	if err != nil {
-		slog.Error("Failed to route message", "error", err)
-		return
+		return err
+	}
+	if len(routes) == 0 {
+		return errors.New("no routes available for message")
 	}
 
+	var publishErr error
 	for _, route := range routes {
 		channel := "agent:" + route.RecipientID.String() + ":queue"
-		if err := e.redis.Publish(e.ctx, channel, msg.ID.String()); err != nil {
-			slog.Error("Failed to publish to channel", "channel", channel, "error", err)
+		if err := e.redis.Publish(ctx, channel, msg.ID.String()); err != nil {
+			publishErr = err
+			break
 		}
 	}
+
+	if publishErr != nil {
+		return publishErr
+	}
+
+	if e.db != nil {
+		if err := e.db.UpdateMessageStatus(ctx, msg.ID, model.MessageStatusSent); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (e *MessageEngine) SendMessage(ctx context.Context, msg *model.Message) (*model.SendResult, error) {
@@ -246,12 +273,25 @@ func (q *DeadLetterQueue) ProcessLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			q.process()
+			q.process(ctx)
 		}
 	}
 }
 
-func (q *DeadLetterQueue) process() {
+func (q *DeadLetterQueue) process(ctx context.Context) {
+	if q.db == nil || q.redis == nil {
+		return
+	}
+
+	entries, err := q.db.ListRetryableDeadLetterEntries(ctx, 100)
+	if err != nil {
+		slog.Error("Failed to load dead letter entries", "error", err)
+		return
+	}
+
+	for _, entry := range entries {
+		q.retryEntry(ctx, entry)
+	}
 }
 
 func (q *DeadLetterQueue) Enqueue(ctx context.Context, msg *model.Message, reason string) error {
@@ -260,5 +300,98 @@ func (q *DeadLetterQueue) Enqueue(ctx context.Context, msg *model.Message, reaso
 		"reason":  reason,
 		"time":    time.Now(),
 	})
+
+	if q.db != nil {
+		entry := &model.DeadLetterEntry{
+			ID:         uuid.New(),
+			MessageID:  msg.ID,
+			Reason:     reason,
+			RetryCount: 0,
+			MaxRetries: q.maxRetries,
+			Payload:    data,
+			Status:     model.DeadLetterStatusPending,
+			CreatedAt:  time.Now(),
+		}
+		return q.db.CreateDeadLetterEntry(ctx, entry)
+	}
+
+	if q.redis == nil {
+		return ErrEngineDependenciesNotConfigured
+	}
+
 	return q.redis.ZAdd(ctx, "dlq:pending", redis.Z{Score: float64(time.Now().Unix()), Member: string(data)})
+}
+
+func (q *DeadLetterQueue) retryEntry(ctx context.Context, entry model.DeadLetterEntry) {
+	var envelope struct {
+		Message *model.Message `json:"message"`
+	}
+	if err := json.Unmarshal(entry.Payload, &envelope); err != nil {
+		slog.Error("Failed to decode dead letter payload", "entry_id", entry.ID, "error", err)
+		q.markEntry(ctx, entry, model.DeadLetterStatusExhausted, entry.MaxRetries)
+		return
+	}
+	if envelope.Message == nil {
+		slog.Error("Dead letter payload missing message", "entry_id", entry.ID)
+		q.markEntry(ctx, entry, model.DeadLetterStatusExhausted, entry.MaxRetries)
+		return
+	}
+
+	if err := q.publishMessage(ctx, envelope.Message); err != nil {
+		nextRetryCount := entry.RetryCount + 1
+		status := model.DeadLetterStatusPending
+		if nextRetryCount >= entry.MaxRetries {
+			status = model.DeadLetterStatusExhausted
+			if q.db != nil {
+				_ = q.db.UpdateMessageStatus(ctx, envelope.Message.ID, model.MessageStatusFailed)
+			}
+		}
+		q.markEntry(ctx, entry, status, nextRetryCount)
+		slog.Error("Failed to retry dead letter message", "entry_id", entry.ID, "message_id", envelope.Message.ID, "error", err)
+		return
+	}
+
+	if q.db != nil {
+		_ = q.db.UpdateMessageStatus(ctx, envelope.Message.ID, model.MessageStatusSent)
+	}
+	q.markEntry(ctx, entry, model.DeadLetterStatusProcessed, entry.RetryCount+1)
+}
+
+func (q *DeadLetterQueue) publishMessage(ctx context.Context, msg *model.Message) error {
+	if q.redis == nil {
+		return ErrEngineDependenciesNotConfigured
+	}
+	if len(msg.RecipientIDs) == 0 && msg.RecipientStr != "" {
+		if err := msg.ScanRecipients(); err != nil {
+			return err
+		}
+	}
+	if len(msg.RecipientIDs) == 0 {
+		return errors.New("message has no recipients")
+	}
+
+	for _, recipientID := range msg.RecipientIDs {
+		channel := "agent:" + recipientID.String() + ":queue"
+		if err := q.redis.Publish(ctx, channel, msg.ID.String()); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (q *DeadLetterQueue) markEntry(ctx context.Context, entry model.DeadLetterEntry, status model.DeadLetterStatus, retryCount int) {
+	if q.db == nil {
+		return
+	}
+
+	var processedAt *time.Time
+	if status == model.DeadLetterStatusProcessed || status == model.DeadLetterStatusExhausted {
+		now := time.Now()
+		processedAt = &now
+	}
+
+	if err := q.db.UpdateDeadLetterEntry(ctx, entry.ID, status, retryCount, processedAt); err != nil {
+		slog.Error("Failed to update dead letter entry", "entry_id", entry.ID, "error", err)
+	}
 }
