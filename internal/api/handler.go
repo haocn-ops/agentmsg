@@ -17,9 +17,9 @@ import (
 )
 
 type Server struct {
-	config      *ServerConfig
-	deps        *Dependencies
-	httpServer  *http.Server
+	config     *ServerConfig
+	deps       *Dependencies
+	httpServer *http.Server
 }
 
 type ServerConfig struct {
@@ -146,22 +146,25 @@ func (s *Server) readinessCheck(c *gin.Context) {
 }
 
 type AgentRequest struct {
-	DID          string                `json:"did"`
-	PublicKey    string               `json:"publicKey"`
-	Name         string               `json:"name"`
-	Version      string               `json:"version"`
-	Provider     string              `json:"provider"`
-	Capabilities []model.Capability   `json:"capabilities"`
+	DID          string             `json:"did"`
+	PublicKey    string             `json:"publicKey"`
+	Name         string             `json:"name"`
+	Version      string             `json:"version"`
+	Provider     string             `json:"provider"`
+	Capabilities []model.Capability `json:"capabilities"`
 }
 
 func (s *Server) createAgent(c *gin.Context) {
 	var req AgentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
-	tenantID := uuid.MustParse(c.GetString("tenant_id"))
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
+		return
+	}
 
 	agent := &model.Agent{
 		TenantID:     tenantID,
@@ -174,7 +177,7 @@ func (s *Server) createAgent(c *gin.Context) {
 	}
 
 	if err := s.deps.AgentService.Register(c.Request.Context(), agent); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServiceError(c, err, "agent_not_found")
 		return
 	}
 
@@ -182,36 +185,53 @@ func (s *Server) createAgent(c *gin.Context) {
 }
 
 func (s *Server) getAgent(c *gin.Context) {
-	id := uuid.MustParse(c.Param("id"))
-	agent, err := s.deps.AgentService.GetByID(c.Request.Context(), id)
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
+		return
+	}
+	agent, err := s.deps.AgentService.GetByIDForTenant(c.Request.Context(), tenantID, id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		respondServiceError(c, err, "agent_not_found")
 		return
 	}
 	c.JSON(http.StatusOK, agent)
 }
 
 func (s *Server) listAgents(c *gin.Context) {
-	tenantID := uuid.MustParse(c.GetString("tenant_id"))
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
+		return
+	}
 	agents, err := s.deps.AgentService.ListByTenant(c.Request.Context(), tenantID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServiceError(c, err, "agent_not_found")
 		return
 	}
 	c.JSON(http.StatusOK, agents)
 }
 
 func (s *Server) updateAgent(c *gin.Context) {
-	id := uuid.MustParse(c.Param("id"))
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
 	var req AgentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
 		return
 	}
 
-	agent, err := s.deps.AgentService.GetByID(c.Request.Context(), id)
+	agent, err := s.deps.AgentService.GetByIDForTenant(c.Request.Context(), tenantID, id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		respondServiceError(c, err, "agent_not_found")
 		return
 	}
 
@@ -219,8 +239,8 @@ func (s *Server) updateAgent(c *gin.Context) {
 	agent.Version = req.Version
 	agent.Capabilities = req.Capabilities
 
-	if err := s.deps.AgentService.Update(c.Request.Context(), agent); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := s.deps.AgentService.UpdateForTenant(c.Request.Context(), tenantID, agent); err != nil {
+		respondServiceError(c, err, "agent_not_found")
 		return
 	}
 
@@ -228,30 +248,44 @@ func (s *Server) updateAgent(c *gin.Context) {
 }
 
 func (s *Server) deleteAgent(c *gin.Context) {
-	id := uuid.MustParse(c.Param("id"))
-	if err := s.deps.AgentService.Delete(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
+		return
+	}
+	if err := s.deps.AgentService.DeleteForTenant(c.Request.Context(), tenantID, id); err != nil {
+		respondServiceError(c, err, "agent_not_found")
 		return
 	}
 	c.JSON(http.StatusNoContent, nil)
 }
 
 func (s *Server) heartbeat(c *gin.Context) {
-	id := uuid.MustParse(c.Param("id"))
-	if err := s.deps.AgentService.Heartbeat(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
+		return
+	}
+	if err := s.deps.AgentService.HeartbeatForTenant(c.Request.Context(), tenantID, id); err != nil {
+		respondServiceError(c, err, "agent_not_found")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 type MessageRequest struct {
-	MessageType   model.MessageType       `json:"messageType"`
-	Recipients    []uuid.UUID             `json:"recipients"`
-	Content       interface{}             `json:"content"`
-	Metadata      map[string]interface{} `json:"metadata"`
+	MessageType       model.MessageType       `json:"messageType"`
+	Recipients        []uuid.UUID             `json:"recipients"`
+	Content           interface{}             `json:"content"`
+	Metadata          map[string]interface{}  `json:"metadata"`
 	DeliveryGuarantee model.DeliveryGuarantee `json:"deliveryGuarantee"`
-	TaskContext   *model.TaskContext     `json:"taskContext,omitempty"`
+	TaskContext       *model.TaskContext      `json:"taskContext,omitempty"`
 }
 
 func buildMessageFromRequest(senderID, tenantID uuid.UUID, traceID string, req MessageRequest) (*model.Message, error) {
@@ -266,18 +300,18 @@ func buildMessageFromRequest(senderID, tenantID uuid.UUID, traceID string, req M
 	}
 
 	return &model.Message{
-		ConversationID:     uuid.New(),
-		MessageType:        req.MessageType,
-		SenderID:           senderID,
-		RecipientIDs:       req.Recipients,
-		Content:            content,
-		ContentSize:        len(content),
-		ContentType:        contentType,
-		DeliveryGuarantee:  deliveryGuarantee,
-		Metadata:           model.MessageMetadata{Custom: req.Metadata},
-		TaskContext:        req.TaskContext,
-		TraceID:            traceID,
-		TenantID:           tenantID,
+		ConversationID:    uuid.New(),
+		MessageType:       req.MessageType,
+		SenderID:          senderID,
+		RecipientIDs:      req.Recipients,
+		Content:           content,
+		ContentSize:       len(content),
+		ContentType:       contentType,
+		DeliveryGuarantee: deliveryGuarantee,
+		Metadata:          model.MessageMetadata{Custom: req.Metadata},
+		TaskContext:       req.TaskContext,
+		TraceID:           traceID,
+		TenantID:          tenantID,
 	}, nil
 }
 
@@ -303,22 +337,28 @@ func serializeContent(content interface{}) ([]byte, string, error) {
 func (s *Server) sendMessage(c *gin.Context) {
 	var req MessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
-	senderID := uuid.MustParse(c.GetString("agent_id"))
-	tenantID := uuid.MustParse(c.GetString("tenant_id"))
+	senderID, ok := contextUUID(c, "agent_id")
+	if !ok {
+		return
+	}
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
+		return
+	}
 
 	msg, err := buildMessageFromRequest(senderID, tenantID, c.GetString("trace_id"), req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
 	result, err := s.deps.MessageService.Send(c.Request.Context(), msg)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServiceError(c, err, "message_not_found")
 		return
 	}
 
@@ -326,17 +366,27 @@ func (s *Server) sendMessage(c *gin.Context) {
 }
 
 func (s *Server) getMessage(c *gin.Context) {
-	id := uuid.MustParse(c.Param("id"))
-	msg, err := s.deps.MessageService.GetByID(c.Request.Context(), id)
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
+		return
+	}
+	msg, err := s.deps.MessageService.GetByIDForTenant(c.Request.Context(), tenantID, id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "message not found"})
+		respondServiceError(c, err, "message_not_found")
 		return
 	}
 	c.JSON(http.StatusOK, msg)
 }
 
 func (s *Server) acknowledgeMessage(c *gin.Context) {
-	id := uuid.MustParse(c.Param("id"))
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
 	var req struct {
 		Status    string `json:"status"`
 		Details   string `json:"details"`
@@ -344,27 +394,35 @@ func (s *Server) acknowledgeMessage(c *gin.Context) {
 		Signature string `json:"signature"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
 	ackStatus := model.AckStatus(req.Status)
 	if ackStatus == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "status is required"})
+		respondError(c, http.StatusBadRequest, "invalid_request", "status is required")
+		return
+	}
+	agentID, ok := contextUUID(c, "agent_id")
+	if !ok {
+		return
+	}
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
 		return
 	}
 
 	ack := &model.Acknowledgement{
 		MessageID: id,
-		AgentID:   uuid.MustParse(c.GetString("agent_id")),
+		AgentID:   agentID,
 		Status:    ackStatus,
 		Details:   req.Details,
 		Nonce:     req.Nonce,
 		Signature: req.Signature,
 	}
 
-	if err := s.deps.MessageService.Acknowledge(c.Request.Context(), ack); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := s.deps.MessageService.AcknowledgeForTenant(c.Request.Context(), tenantID, ack); err != nil {
+		respondServiceError(c, err, "message_not_found")
 		return
 	}
 
@@ -377,7 +435,7 @@ func (s *Server) acknowledgeMessage(c *gin.Context) {
 }
 
 func (s *Server) getMessageStats(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
+	respondError(c, http.StatusNotImplemented, "not_implemented", "not implemented")
 }
 
 func serviceMessageStatusForAck(status model.AckStatus) model.MessageStatus {

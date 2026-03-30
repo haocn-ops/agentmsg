@@ -134,6 +134,12 @@ curl -H "Authorization: Bearer YOUR_API_KEY" \
      https://api.agentmsg.cloud/api/v1/agents
 ```
 
+Tenant isolation:
+
+- Resource reads and writes are scoped to the authenticated tenant.
+- Cross-tenant access returns `404` to avoid leaking resource existence.
+- Message acknowledgements are only accepted from recipient agents of that message.
+
 #### Endpoints
 
 | Method | Endpoint | Description |
@@ -146,6 +152,19 @@ curl -H "Authorization: Bearer YOUR_API_KEY" \
 | GET | `/messages/:id` | Get message by ID |
 | POST | `/subscriptions` | Create subscription |
 | POST | `/discovery/query` | Query capabilities |
+
+Error response shape:
+
+```json
+{
+  "error": {
+    "code": "invalid_uuid",
+    "message": "invalid id"
+  },
+  "requestId": "req-123",
+  "traceId": "trace-123"
+}
+```
 
 ### WebSocket
 

@@ -21,6 +21,7 @@ import (
 
 var (
 	ErrAgentNotFound      = errors.New("agent not found")
+	ErrMessageNotFound    = errors.New("message not found")
 	ErrUnauthorized       = errors.New("unauthorized")
 	ErrInvalidToken       = errors.New("invalid token")
 	ErrInvalidMessage     = errors.New("invalid message")
@@ -74,6 +75,21 @@ func (s *AgentService) GetByID(ctx context.Context, id uuid.UUID) (*model.Agent,
 	return agent, nil
 }
 
+func (s *AgentService) GetByIDForTenant(ctx context.Context, tenantID, id uuid.UUID) (*model.Agent, error) {
+	if s == nil || s.repo == nil {
+		return nil, ErrServiceUnavailable
+	}
+
+	agent, err := s.repo.GetByIDForTenant(ctx, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	if agent == nil {
+		return nil, ErrAgentNotFound
+	}
+	return agent, nil
+}
+
 func (s *AgentService) Update(ctx context.Context, agent *model.Agent) error {
 	if s == nil || s.repo == nil {
 		return ErrServiceUnavailable
@@ -86,11 +102,44 @@ func (s *AgentService) Update(ctx context.Context, agent *model.Agent) error {
 	return s.repo.Update(ctx, agent)
 }
 
+func (s *AgentService) UpdateForTenant(ctx context.Context, tenantID uuid.UUID, agent *model.Agent) error {
+	if s == nil || s.repo == nil {
+		return ErrServiceUnavailable
+	}
+	if agent == nil {
+		return ErrInvalidMessage
+	}
+
+	agent.UpdatedAt = time.Now()
+	updated, err := s.repo.UpdateForTenant(ctx, tenantID, agent)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return ErrAgentNotFound
+	}
+	return nil
+}
+
 func (s *AgentService) Delete(ctx context.Context, id uuid.UUID) error {
 	if s == nil || s.repo == nil {
 		return ErrServiceUnavailable
 	}
 	return s.repo.Delete(ctx, id)
+}
+
+func (s *AgentService) DeleteForTenant(ctx context.Context, tenantID, id uuid.UUID) error {
+	if s == nil || s.repo == nil {
+		return ErrServiceUnavailable
+	}
+	deleted, err := s.repo.DeleteForTenant(ctx, tenantID, id)
+	if err != nil {
+		return err
+	}
+	if !deleted {
+		return ErrAgentNotFound
+	}
+	return nil
 }
 
 func (s *AgentService) ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]model.Agent, error) {
@@ -105,6 +154,20 @@ func (s *AgentService) Heartbeat(ctx context.Context, id uuid.UUID) error {
 		return ErrServiceUnavailable
 	}
 	return s.repo.UpdateStatus(ctx, id, model.AgentStatusOnline)
+}
+
+func (s *AgentService) HeartbeatForTenant(ctx context.Context, tenantID, id uuid.UUID) error {
+	if s == nil || s.repo == nil {
+		return ErrServiceUnavailable
+	}
+	updated, err := s.repo.UpdateStatusForTenant(ctx, tenantID, id, model.AgentStatusOnline)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return ErrAgentNotFound
+	}
+	return nil
 }
 
 func (s *AgentService) UpdateCapabilities(ctx context.Context, id uuid.UUID, capabilities model.Capabilities) error {
@@ -211,6 +274,20 @@ func (s *MessageService) GetByID(ctx context.Context, id uuid.UUID) (*model.Mess
 	return s.repo.GetByID(ctx, id)
 }
 
+func (s *MessageService) GetByIDForTenant(ctx context.Context, tenantID, id uuid.UUID) (*model.Message, error) {
+	if s == nil || s.repo == nil {
+		return nil, ErrServiceUnavailable
+	}
+	msg, err := s.repo.GetByIDForTenant(ctx, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	if msg == nil {
+		return nil, ErrMessageNotFound
+	}
+	return msg, nil
+}
+
 func (s *MessageService) Acknowledge(ctx context.Context, ack *model.Acknowledgement) error {
 	start := time.Now()
 	ctx, span := otel.Tracer("agentmsg/service").Start(ctx, "message.acknowledge")
@@ -274,11 +351,86 @@ func (s *MessageService) Acknowledge(ctx context.Context, ack *model.Acknowledge
 	return nil
 }
 
+func (s *MessageService) AcknowledgeForTenant(ctx context.Context, tenantID uuid.UUID, ack *model.Acknowledgement) error {
+	start := time.Now()
+	ctx, span := otel.Tracer("agentmsg/service").Start(ctx, "message.acknowledge")
+	defer span.End()
+	if s == nil || s.repo == nil || s.ackRepo == nil {
+		observability.RecordMessageOperation("ack", "service_unavailable", time.Since(start))
+		span.SetAttributes(attribute.String("ack.outcome", "service_unavailable"))
+		return ErrServiceUnavailable
+	}
+	if ack == nil {
+		observability.RecordMessageOperation("ack", "invalid_message", time.Since(start))
+		span.SetAttributes(attribute.String("ack.outcome", "invalid_message"))
+		return ErrInvalidMessage
+	}
+	if ack.MessageID == uuid.Nil || ack.AgentID == uuid.Nil || ack.Status == "" {
+		observability.RecordMessageOperation("ack", "invalid_message", time.Since(start))
+		span.SetAttributes(attribute.String("ack.outcome", "invalid_message"))
+		return ErrInvalidMessage
+	}
+
+	msg, err := s.repo.GetByIDForTenant(ctx, tenantID, ack.MessageID)
+	if err != nil {
+		observability.RecordMessageOperation("ack", "lookup_error", time.Since(start))
+		span.RecordError(err)
+		return err
+	}
+	if msg == nil {
+		observability.RecordMessageOperation("ack", "message_not_found", time.Since(start))
+		span.SetAttributes(attribute.String("ack.outcome", "message_not_found"))
+		return ErrMessageNotFound
+	}
+	if !messageHasRecipient(msg, ack.AgentID) {
+		observability.RecordMessageOperation("ack", "unauthorized", time.Since(start))
+		span.SetAttributes(attribute.String("ack.outcome", "unauthorized"))
+		return ErrUnauthorized
+	}
+
+	if ack.ID == uuid.Nil {
+		ack.ID = uuid.New()
+	}
+	if ack.CreatedAt.IsZero() {
+		ack.CreatedAt = time.Now()
+	}
+	if ack.Nonce == "" {
+		ack.Nonce = uuid.NewString()
+	}
+
+	if err := s.ackRepo.Create(ctx, ack); err != nil {
+		observability.RecordMessageOperation("ack", "persist_error", time.Since(start))
+		span.RecordError(err)
+		return err
+	}
+
+	if err := s.repo.UpdateStatus(ctx, ack.MessageID, mapAckToMessageStatus(ack.Status)); err != nil {
+		observability.RecordMessageOperation("ack", "status_update_error", time.Since(start))
+		span.RecordError(err)
+		return err
+	}
+
+	observability.RecordMessageOperation("ack", string(ack.Status), time.Since(start))
+	span.SetAttributes(
+		attribute.String("message.id", ack.MessageID.String()),
+		attribute.String("ack.status", string(ack.Status)),
+		attribute.String("ack.outcome", string(ack.Status)),
+	)
+	return nil
+}
+
 func (s *MessageService) ListByConversation(ctx context.Context, conversationID uuid.UUID, limit int) ([]model.Message, error) {
 	if s == nil || s.repo == nil {
 		return nil, ErrServiceUnavailable
 	}
 	return s.repo.ListByConversation(ctx, conversationID, limit)
+}
+
+func (s *MessageService) ListByConversationForTenant(ctx context.Context, tenantID, conversationID uuid.UUID, limit int) ([]model.Message, error) {
+	if s == nil || s.repo == nil {
+		return nil, ErrServiceUnavailable
+	}
+	return s.repo.ListByConversationForTenant(ctx, tenantID, conversationID, limit)
 }
 
 type AuthService struct {
@@ -400,6 +552,18 @@ func (s *AuthService) ValidateToken(token string) (*model.TokenClaims, error) {
 		IssuedAt:  claims.IssuedAt,
 		ExpiresAt: claims.ExpiresAt,
 	}, nil
+}
+
+func messageHasRecipient(msg *model.Message, agentID uuid.UUID) bool {
+	if msg == nil {
+		return false
+	}
+	for _, recipientID := range msg.RecipientIDs {
+		if recipientID == agentID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *AuthService) signJWT(signingInput string) (string, error) {

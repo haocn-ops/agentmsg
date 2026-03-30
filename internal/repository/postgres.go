@@ -190,6 +190,19 @@ func (r *AgentRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Age
 	return &agent, nil
 }
 
+func (r *AgentRepository) GetByIDForTenant(ctx context.Context, tenantID, id uuid.UUID) (*model.Agent, error) {
+	var agent model.Agent
+	query := `SELECT * FROM agents WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
+	err := r.db.GetContext(ctx, &agent, query, id, tenantID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &agent, nil
+}
+
 func (r *AgentRepository) GetByDID(ctx context.Context, did string) (*model.Agent, error) {
 	var agent model.Agent
 	query := `SELECT * FROM agents WHERE did = $1 AND deleted_at IS NULL`
@@ -216,10 +229,35 @@ func (r *AgentRepository) Update(ctx context.Context, agent *model.Agent) error 
 	return err
 }
 
+func (r *AgentRepository) UpdateForTenant(ctx context.Context, tenantID uuid.UUID, agent *model.Agent) (bool, error) {
+	query := `
+		UPDATE agents SET
+			name = $2, version = $3, capabilities = $4, endpoints = $5, status = $6, last_heartbeat = $7
+		WHERE id = $1 AND tenant_id = $8 AND deleted_at IS NULL
+	`
+	result, err := r.db.ExecContext(ctx, query,
+		agent.ID, agent.Name, agent.Version,
+		agent.Capabilities, agent.Endpoints, agent.Status, agent.LastHeartbeat, tenantID,
+	)
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected(result)
+}
+
 func (r *AgentRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	query := `UPDATE agents SET deleted_at = NOW() WHERE id = $1`
 	_, err := r.db.ExecContext(ctx, query, id)
 	return err
+}
+
+func (r *AgentRepository) DeleteForTenant(ctx context.Context, tenantID, id uuid.UUID) (bool, error) {
+	query := `UPDATE agents SET deleted_at = NOW() WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
+	result, err := r.db.ExecContext(ctx, query, id, tenantID)
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected(result)
 }
 
 func (r *AgentRepository) ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]model.Agent, error) {
@@ -236,6 +274,15 @@ func (r *AgentRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status
 	query := `UPDATE agents SET status = $2, last_heartbeat = NOW() WHERE id = $1`
 	_, err := r.db.ExecContext(ctx, query, id, status)
 	return err
+}
+
+func (r *AgentRepository) UpdateStatusForTenant(ctx context.Context, tenantID, id uuid.UUID, status model.AgentStatus) (bool, error) {
+	query := `UPDATE agents SET status = $2, last_heartbeat = NOW() WHERE id = $1 AND tenant_id = $3 AND deleted_at IS NULL`
+	result, err := r.db.ExecContext(ctx, query, id, status, tenantID)
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected(result)
 }
 
 func (r *AgentRepository) QueryByCapabilities(ctx context.Context, tenantID uuid.UUID, capabilities []string) ([]model.Agent, error) {
@@ -318,6 +365,22 @@ func (r *MessageRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.M
 	return &msg, nil
 }
 
+func (r *MessageRepository) GetByIDForTenant(ctx context.Context, tenantID, id uuid.UUID) (*model.Message, error) {
+	var msg model.Message
+	query := `SELECT * FROM messages WHERE id = $1 AND tenant_id = $2`
+	err := r.db.GetContext(ctx, &msg, query, id, tenantID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := msg.ScanRecipients(); err != nil {
+		return nil, err
+	}
+	return &msg, nil
+}
+
 func (r *MessageRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status model.MessageStatus) error {
 	query := `
 		UPDATE messages
@@ -337,6 +400,21 @@ func (r *MessageRepository) ListByConversation(ctx context.Context, conversation
 	var messages []model.Message
 	query := `SELECT * FROM messages WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT $2`
 	err := r.db.SelectContext(ctx, &messages, query, conversationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range messages {
+		if err := messages[i].ScanRecipients(); err != nil {
+			return nil, err
+		}
+	}
+	return messages, nil
+}
+
+func (r *MessageRepository) ListByConversationForTenant(ctx context.Context, tenantID, conversationID uuid.UUID, limit int) ([]model.Message, error) {
+	var messages []model.Message
+	query := `SELECT * FROM messages WHERE tenant_id = $1 AND conversation_id = $2 ORDER BY created_at DESC LIMIT $3`
+	err := r.db.SelectContext(ctx, &messages, query, tenantID, conversationID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -397,6 +475,14 @@ func (r *AcknowledgementRepository) GetByMessageID(ctx context.Context, messageI
 
 type TenantRepository struct {
 	db *sqlx.DB
+}
+
+func rowsAffected(result sql.Result) (bool, error) {
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func NewTenantRepository(db *PostgresDB) *TenantRepository {

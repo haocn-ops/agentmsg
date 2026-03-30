@@ -17,12 +17,18 @@ type BatchMessageRequest struct {
 func (s *Server) sendBatchMessages(c *gin.Context) {
 	var req BatchMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
-	senderID := uuid.MustParse(c.GetString("agent_id"))
-	tenantID := uuid.MustParse(c.GetString("tenant_id"))
+	senderID, ok := contextUUID(c, "agent_id")
+	if !ok {
+		return
+	}
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
+		return
+	}
 
 	results := make([]model.SendResult, 0, len(req.Messages))
 	for _, msgReq := range req.Messages {
@@ -57,11 +63,14 @@ type ListMessagesRequest struct {
 func (s *Server) listMessages(c *gin.Context) {
 	var req ListMessagesRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
-	tenantID := uuid.MustParse(c.GetString("tenant_id"))
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
+		return
+	}
 
 	var messages []model.Message
 	var err error
@@ -69,16 +78,16 @@ func (s *Server) listMessages(c *gin.Context) {
 	if req.ConversationID != "" {
 		convID, parseErr := uuid.Parse(req.ConversationID)
 		if parseErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid conversationId"})
+			respondError(c, http.StatusBadRequest, "invalid_uuid", "invalid conversationId")
 			return
 		}
-		messages, err = s.deps.MessageService.ListByConversation(c.Request.Context(), convID, req.Limit)
+		messages, err = s.deps.MessageService.ListByConversationForTenant(c.Request.Context(), tenantID, convID, req.Limit)
 	} else {
 		messages, err = s.deps.MessageService.ListByTenant(c.Request.Context(), tenantID, req.Limit, req.Offset)
 	}
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServiceError(c, err, "message_not_found")
 		return
 	}
 
@@ -91,19 +100,25 @@ func (s *Server) listMessages(c *gin.Context) {
 }
 
 type CreateSubscriptionRequest struct {
-	Type   model.SubType              `json:"type"`
-	Filter model.SubscriptionFilter   `json:"filter"`
+	Type   model.SubType            `json:"type"`
+	Filter model.SubscriptionFilter `json:"filter"`
 }
 
 func (s *Server) createSubscription(c *gin.Context) {
 	var req CreateSubscriptionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
-	agentID := uuid.MustParse(c.GetString("agent_id"))
-	tenantID := uuid.MustParse(c.GetString("tenant_id"))
+	agentID, ok := contextUUID(c, "agent_id")
+	if !ok {
+		return
+	}
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
+		return
+	}
 
 	subscription := &model.Subscription{
 		ID:        uuid.New(),
@@ -116,7 +131,7 @@ func (s *Server) createSubscription(c *gin.Context) {
 	}
 
 	if err := s.deps.MessageService.CreateSubscription(c.Request.Context(), subscription); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServiceError(c, err, "subscription_not_found")
 		return
 	}
 
@@ -124,11 +139,14 @@ func (s *Server) createSubscription(c *gin.Context) {
 }
 
 func (s *Server) listSubscriptions(c *gin.Context) {
-	agentID := uuid.MustParse(c.GetString("agent_id"))
+	agentID, ok := contextUUID(c, "agent_id")
+	if !ok {
+		return
+	}
 
 	subscriptions, err := s.deps.MessageService.ListSubscriptions(c.Request.Context(), agentID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServiceError(c, err, "subscription_not_found")
 		return
 	}
 
@@ -139,11 +157,17 @@ func (s *Server) listSubscriptions(c *gin.Context) {
 }
 
 func (s *Server) deleteSubscription(c *gin.Context) {
-	id := uuid.MustParse(c.Param("id"))
-	agentID := uuid.MustParse(c.GetString("agent_id"))
+	id, ok := parseUUIDParam(c, "id")
+	if !ok {
+		return
+	}
+	agentID, ok := contextUUID(c, "agent_id")
+	if !ok {
+		return
+	}
 
 	if err := s.deps.MessageService.DeleteSubscription(c.Request.Context(), agentID, id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServiceError(c, err, "subscription_not_found")
 		return
 	}
 
@@ -151,28 +175,31 @@ func (s *Server) deleteSubscription(c *gin.Context) {
 }
 
 type CapabilityQueryRequest struct {
-	Capabilities []string           `json:"capabilities"`
+	Capabilities []string            `json:"capabilities"`
 	MessageTypes []model.MessageType `json:"messageTypes,omitempty"`
-	Tags         map[string]string  `json:"tags,omitempty"`
+	Tags         map[string]string   `json:"tags,omitempty"`
 }
 
 func (s *Server) queryCapabilities(c *gin.Context) {
 	var req CapabilityQueryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
-	tenantID := uuid.MustParse(c.GetString("tenant_id"))
+	tenantID, ok := contextUUID(c, "tenant_id")
+	if !ok {
+		return
+	}
 
 	agents, err := s.deps.AgentService.QueryByCapabilities(c.Request.Context(), tenantID, req.Capabilities)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServiceError(c, err, "agent_not_found")
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"agents":  agents,
-		"count":   len(agents),
+		"agents": agents,
+		"count":  len(agents),
 	})
 }

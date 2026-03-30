@@ -221,3 +221,128 @@ func cleanupTenantData(t *testing.T, db *repository.PostgresDB, tenantID uuid.UU
 	_, _ = db.DB().ExecContext(ctx, `DELETE FROM audit_logs WHERE tenant_id = $1`, tenantID)
 	_, _ = db.DB().ExecContext(ctx, `DELETE FROM tenants WHERE id = $1`, tenantID)
 }
+
+func TestTenantIsolationAndAckAuthorizationE2E(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	redisURL := os.Getenv("REDIS_URL")
+	if databaseURL == "" || redisURL == "" {
+		t.Skip("DATABASE_URL and REDIS_URL must be set for e2e integration tests")
+	}
+
+	db, err := repository.NewPostgresDB(databaseURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	redisClient, err := repository.NewRedisClient(redisURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, redisClient.Close()) }()
+
+	applyTestMigrations(t, db)
+
+	tenantA := uuid.New()
+	senderID := uuid.New()
+	recipientID := uuid.New()
+	insertTenantAndAgents(t, db, tenantA, senderID, recipientID)
+	defer cleanupTenantData(t, db, tenantA)
+
+	tenantB := uuid.New()
+	intruderID := uuid.New()
+	insertTenantAndAgents(t, db, tenantB, intruderID, uuid.New())
+	defer cleanupTenantData(t, db, tenantB)
+
+	agentRepo := repository.NewAgentRepository(db)
+	messageRepo := repository.NewMessageRepository(db)
+	ackRepo := repository.NewAcknowledgementRepository(db)
+
+	agentService := service.NewAgentService(agentRepo, redisClient)
+	messageService := service.NewMessageService(messageRepo, ackRepo, redisClient)
+	authService := service.NewAuthService("test-secret")
+	server := NewServer(&ServerConfig{
+		Addr:         "127.0.0.1:0",
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}, &Dependencies{
+		AgentService:   agentService,
+		MessageService: messageService,
+		AuthService:    authService,
+		Database:       db,
+		Redis:          redisClient,
+		Middleware:     middleware.NewMiddleware(redisClient, db, authService, 1000, time.Minute),
+	})
+
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	defer httpServer.Close()
+
+	senderToken, err := authService.GenerateToken(senderID, tenantA)
+	require.NoError(t, err)
+	intruderToken, err := authService.GenerateToken(intruderID, tenantB)
+	require.NoError(t, err)
+
+	sendPayload := map[string]any{
+		"messageType": "generic",
+		"recipients":  []string{recipientID.String()},
+		"content":     map[string]any{"text": "tenant isolated"},
+	}
+	reqBody, err := json.Marshal(sendPayload)
+	require.NoError(t, err)
+
+	sendReq, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/messages", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	sendReq.Header.Set("Authorization", "Bearer "+senderToken)
+	sendReq.Header.Set("Content-Type", "application/json")
+
+	sendResp, err := http.DefaultClient.Do(sendReq)
+	require.NoError(t, err)
+	defer sendResp.Body.Close()
+	require.Equal(t, http.StatusCreated, sendResp.StatusCode)
+
+	var sendResult model.SendResult
+	require.NoError(t, json.NewDecoder(sendResp.Body).Decode(&sendResult))
+
+	getMessageReq, err := http.NewRequest(http.MethodGet, httpServer.URL+"/api/v1/messages/"+sendResult.MessageID.String(), nil)
+	require.NoError(t, err)
+	getMessageReq.Header.Set("Authorization", "Bearer "+intruderToken)
+
+	getMessageResp, err := http.DefaultClient.Do(getMessageReq)
+	require.NoError(t, err)
+	defer getMessageResp.Body.Close()
+	require.Equal(t, http.StatusNotFound, getMessageResp.StatusCode)
+
+	var messageErr apiErrorEnvelope
+	require.NoError(t, json.NewDecoder(getMessageResp.Body).Decode(&messageErr))
+	require.Equal(t, "message_not_found", messageErr.Error.Code)
+
+	getAgentReq, err := http.NewRequest(http.MethodGet, httpServer.URL+"/api/v1/agents/"+senderID.String(), nil)
+	require.NoError(t, err)
+	getAgentReq.Header.Set("Authorization", "Bearer "+intruderToken)
+
+	getAgentResp, err := http.DefaultClient.Do(getAgentReq)
+	require.NoError(t, err)
+	defer getAgentResp.Body.Close()
+	require.Equal(t, http.StatusNotFound, getAgentResp.StatusCode)
+
+	var agentErr apiErrorEnvelope
+	require.NoError(t, json.NewDecoder(getAgentResp.Body).Decode(&agentErr))
+	require.Equal(t, "agent_not_found", agentErr.Error.Code)
+
+	ackPayload := map[string]any{
+		"status": "processed",
+	}
+	ackBody, err := json.Marshal(ackPayload)
+	require.NoError(t, err)
+
+	ackReq, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/messages/"+sendResult.MessageID.String()+"/ack", bytes.NewReader(ackBody))
+	require.NoError(t, err)
+	ackReq.Header.Set("Authorization", "Bearer "+senderToken)
+	ackReq.Header.Set("Content-Type", "application/json")
+
+	ackResp, err := http.DefaultClient.Do(ackReq)
+	require.NoError(t, err)
+	defer ackResp.Body.Close()
+	require.Equal(t, http.StatusForbidden, ackResp.StatusCode)
+
+	var ackErr apiErrorEnvelope
+	require.NoError(t, json.NewDecoder(ackResp.Body).Decode(&ackErr))
+	require.Equal(t, "forbidden", ackErr.Error.Code)
+}
