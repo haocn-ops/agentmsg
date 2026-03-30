@@ -30,6 +30,18 @@ The manifests now include:
 - Baseline `NetworkPolicy` objects
 - Staging and production overlays
 
+## GitHub Deploy Secrets
+
+For GitHub Actions based deployments, configure these environment secrets:
+
+- `STAGING_KUBECONFIG`: raw kubeconfig content for the staging cluster
+- `STAGING_KUBECONFIG_CONTEXT`: optional staging kubeconfig context override
+- `PRODUCTION_KUBECONFIG`: raw kubeconfig content for the production cluster
+- `PRODUCTION_KUBECONFIG_CONTEXT`: optional production kubeconfig context override
+- `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`: registry credentials for the published runtime images
+
+The CI workflow publishes both `latest` and commit-SHA image tags. Staging and production deploys render the appropriate overlay and pin workloads to the commit SHA so every rollout is traceable and rollback-friendly.
+
 If you use the bundled `allow-api-gateway-ingress` policy, label the ingress controller namespace with:
 
 ```bash
