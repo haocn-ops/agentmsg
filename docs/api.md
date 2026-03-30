@@ -2,6 +2,7 @@
 
 > Version: v1.0
 > Base URL: `https://api.agentmsg.cloud/api/v1`
+> OpenAPI: `/openapi.yaml`
 
 ## Authentication
 

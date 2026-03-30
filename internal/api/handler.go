@@ -63,6 +63,7 @@ func (s *Server) setupRoutes(r *gin.Engine) {
 	r.GET("/health", s.healthCheck)
 	r.GET("/ready", s.readinessCheck)
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	r.GET("/openapi.yaml", s.openAPISpec)
 
 	v1 := r.Group("/api/v1")
 	v1.Use(s.deps.Middleware.Authenticate(), s.deps.Middleware.RateLimit(), s.deps.Middleware.AuditLog())

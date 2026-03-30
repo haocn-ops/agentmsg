@@ -1,0 +1,697 @@
+openapi: 3.1.0
+info:
+  title: AgentMsg API
+  version: 1.0.0
+  description: |
+    Machine-readable contract for the currently implemented AgentMsg HTTP API.
+    Resource access is tenant-scoped to the authenticated JWT.
+servers:
+  - url: https://api.agentmsg.cloud
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /ready:
+    get:
+      summary: Readiness probe
+      responses:
+        "200":
+          description: Service dependencies are ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "503":
+          description: Dependency readiness failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      responses:
+        "200":
+          description: Prometheus exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+  /openapi.yaml:
+    get:
+      summary: OpenAPI contract document
+      responses:
+        "200":
+          description: YAML OpenAPI specification
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /api/v1/agents:
+    get:
+      summary: List agents for the authenticated tenant
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Tenant agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Agent"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Create an agent in the authenticated tenant
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRequest"
+      responses:
+        "201":
+          description: Agent created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/agents/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      summary: Fetch an agent by id within the authenticated tenant
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Agent found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      summary: Update an existing agent within the authenticated tenant
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentRequest"
+      responses:
+        "200":
+          description: Agent updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      summary: Delete an agent within the authenticated tenant
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Agent deleted
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/agents/{id}/heartbeat:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      summary: Mark an agent online within the authenticated tenant
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Heartbeat accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ok
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/messages:
+    get:
+      summary: List messages for the authenticated tenant
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: conversationId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Message page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListMessagesResponse"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Send a message
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageRequest"
+      responses:
+        "201":
+          description: Message queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SendResult"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/messages/batch:
+    post:
+      summary: Send a batch of messages
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchMessageRequest"
+      responses:
+        "201":
+          description: Batch processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SendResult"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/messages/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      summary: Fetch a message by id within the authenticated tenant
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Message found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/messages/{id}/ack:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      summary: Acknowledge a message as a recipient agent
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcknowledgeRequest"
+      responses:
+        "200":
+          description: Message acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcknowledgeResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/subscriptions:
+    get:
+      summary: List subscriptions for the authenticated agent
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Subscription list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSubscriptionsResponse"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Create a subscription for the authenticated agent
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSubscriptionRequest"
+      responses:
+        "201":
+          description: Subscription created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscription"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/subscriptions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    delete:
+      summary: Delete a subscription for the authenticated agent
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Subscription deleted
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/discovery/query:
+    post:
+      summary: Query agents by capability within the authenticated tenant
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CapabilityQueryRequest"
+      responses:
+        "200":
+          description: Matching agents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Agent"
+                  count:
+                    type: integer
+        default:
+          $ref: "#/components/responses/Error"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Error:
+      description: Structured API error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+    ReadyResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+      required: [status]
+    ErrorEnvelope:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+          required: [code, message]
+        requestId:
+          type: string
+        traceId:
+          type: string
+      required: [error]
+    AgentRequest:
+      type: object
+      properties:
+        did:
+          type: string
+        publicKey:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        provider:
+          type: string
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Capability"
+      required: [did, publicKey, name]
+    Agent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        did:
+          type: string
+        publicKey:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        provider:
+          type: string
+        tier:
+          type: string
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Capability"
+        endpoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/Endpoint"
+        trustLevel:
+          type: integer
+        status:
+          type: string
+        lastHeartbeat:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, tenantId, did, publicKey, name, capabilities, status]
+    Capability:
+      type: object
+      properties:
+        type:
+          type: string
+        description:
+          type: string
+        examples:
+          type: array
+          items:
+            type: string
+        parameters:
+          type: object
+          additionalProperties: true
+        constraints:
+          type: object
+          additionalProperties: true
+        quality:
+          type: object
+          additionalProperties: true
+      required: [type, description]
+    Endpoint:
+      type: object
+      properties:
+        type:
+          type: string
+        url:
+          type: string
+        weight:
+          type: integer
+        isPrimary:
+          type: boolean
+    MessageRequest:
+      type: object
+      properties:
+        messageType:
+          type: string
+        recipients:
+          type: array
+          items:
+            type: string
+            format: uuid
+        content: {}
+        metadata:
+          type: object
+          additionalProperties: true
+        deliveryGuarantee:
+          type: string
+          enum: [at_most_once, at_least_once, exactly_once]
+        taskContext:
+          type: object
+          additionalProperties: true
+      required: [messageType, recipients, content]
+    BatchMessageRequest:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageRequest"
+      required: [messages]
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        messageType:
+          type: string
+        senderId:
+          type: string
+          format: uuid
+        recipientIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        content:
+          type: string
+          format: byte
+        contentSize:
+          type: integer
+        contentType:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        deliveryGuarantee:
+          type: string
+        status:
+          type: string
+        taskContext:
+          type: object
+          additionalProperties: true
+        traceId:
+          type: string
+        tenantId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        processedAt:
+          type: string
+          format: date-time
+      required: [id, conversationId, messageType, senderId, recipientIds, content, status, tenantId, createdAt]
+    SendResult:
+      type: object
+      properties:
+        messageId:
+          type: string
+          format: uuid
+        status:
+          type: string
+      required: [messageId, status]
+    AcknowledgeRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [received, processed, rejected, failed]
+        details:
+          type: string
+        nonce:
+          type: string
+        signature:
+          type: string
+      required: [status]
+    AcknowledgeResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        ackStatus:
+          type: string
+        messageStatus:
+          type: string
+        nonce:
+          type: string
+      required: [status, ackStatus, messageStatus, nonce]
+    ListMessagesResponse:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+        count:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+      required: [messages, count, limit, offset]
+    CreateSubscriptionRequest:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [direct, capability, topic, pattern]
+        filter:
+          $ref: "#/components/schemas/SubscriptionFilter"
+      required: [type, filter]
+    Subscription:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        agentId:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        type:
+          type: string
+        filter:
+          $ref: "#/components/schemas/SubscriptionFilter"
+        status:
+          type: string
+        createdAt:
+          type: integer
+      required: [id, agentId, tenantId, type, filter, status, createdAt]
+    SubscriptionFilter:
+      type: object
+      properties:
+        agentIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        capabilityTypes:
+          type: array
+          items:
+            type: string
+        topics:
+          type: array
+          items:
+            type: string
+        messageTypes:
+          type: array
+          items:
+            type: string
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+    ListSubscriptionsResponse:
+      type: object
+      properties:
+        subscriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Subscription"
+        count:
+          type: integer
+      required: [subscriptions, count]
+    CapabilityQueryRequest:
+      type: object
+      properties:
+        capabilities:
+          type: array
+          items:
+            type: string
+        messageTypes:
+          type: array
+          items:
+            type: string
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+      required: [capabilities]

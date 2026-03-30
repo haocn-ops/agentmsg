@@ -130,6 +130,8 @@ result, _ := client.SendMessage(ctx, &agentmsg.Message{
 
 Base URL: `https://api.agentmsg.cloud/api/v1`
 
+OpenAPI contract: `GET /openapi.yaml`
+
 #### Authentication
 
 ```bash

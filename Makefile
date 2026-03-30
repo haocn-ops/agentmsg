@@ -1,7 +1,7 @@
 # Build and Development
 ###########################
 
-.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke
+.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke openapi
 
 # Go parameters
 GOCMD=go
@@ -42,6 +42,7 @@ help:
 	@echo "  make docker-down   Stop Docker Compose"
 	@echo "  make migrate       Run database migrations"
 	@echo "  make smoke         Run local startup smoke checks"
+	@echo "  make openapi       Show the OpenAPI spec path"
 	@echo "  make clean         Clean build artifacts"
 
 # Install dependencies
@@ -78,6 +79,9 @@ test-coverage:
 
 smoke:
 	./scripts/smoke.sh
+
+openapi:
+	@echo "OpenAPI spec: docs are served from /openapi.yaml and source lives at internal/api/openapi.yaml"
 
 # Run linter
 lint:
