@@ -10,11 +10,7 @@ __version__ = "0.1.0"
 from typing import Any, Dict, List, Optional, Callable, AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
-import asyncio
-import json
 import logging
-import uuid
-import websockets
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -130,21 +126,25 @@ class Client:
         self,
         api_key: str,
         agent_id: str,
-        endpoint: str = "wss://api.agentmsg.cloud",
+        endpoint: str = "https://api.agentmsg.cloud",
+        name: Optional[str] = None,
+        version: str = "0.1.0",
+        provider: str = "agentmsg-python-sdk",
         reconnect: bool = True,
         max_retries: int = 3,
     ):
         self.api_key = api_key
         self.agent_id = agent_id
         self.endpoint = endpoint.rstrip("/")
+        self.name = name or agent_id
+        self.version = version
+        self.provider = provider
         self.reconnect = reconnect
         self.max_retries = max_retries
 
         self._http: Optional[httpx.AsyncClient] = None
-        self._ws: Optional[websockets.WebSocketClientProtocol] = None
         self._running = False
         self._message_handlers: List[Callable] = []
-        self._ack_handlers: Dict[str, asyncio.Future] = {}
 
     async def __aenter__(self):
         await self.connect()
@@ -154,94 +154,62 @@ class Client:
         await self.disconnect()
 
     async def connect(self) -> None:
-        """Connect to AgentMsg cloud."""
+        """Initialize the HTTP client for AgentMsg."""
+        http_endpoint = self.endpoint.replace("wss://", "https://").replace("ws://", "http://")
         self._http = httpx.AsyncClient(
-            base_url=self.endpoint,
+            base_url=http_endpoint,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
-                "X-Agent-ID": self.agent_id,
             },
             timeout=30.0,
         )
-
-        ws_url = f"wss://{self.endpoint.replace('https://', '').replace('http://', '')}/api/v1/ws?token={self.api_key}&agent_id={self.agent_id}"
-
         try:
-            self._ws = await websockets.connect(
-                ws_url,
-                ping_interval=30,
-                ping_timeout=10,
-            )
-            logger.info("WebSocket connected")
+            response = await self._http.get("/health")
+            response.raise_for_status()
             self._running = True
-            asyncio.create_task(self._message_loop())
+            logger.info("HTTP client connected")
         except Exception as e:
-            logger.error(f"WebSocket connection failed: {e}")
+            logger.error(f"HTTP initialization failed: {e}")
             raise ConnectionError(f"Failed to connect: {e}")
 
     async def disconnect(self) -> None:
         """Disconnect from AgentMsg cloud."""
         self._running = False
-        if self._ws:
-            await self._ws.close()
-            self._ws = None
         if self._http:
             await self._http.aclose()
             self._http = None
         logger.info("Disconnected from AgentMsg")
 
-    async def _message_loop(self) -> None:
-        """Main WebSocket message handling loop."""
-        while self._running and self._ws:
-            try:
-                message = await self._ws.recv()
-                await self._handle_message(json.loads(message))
-            except websockets.ConnectionClosed:
-                logger.warning("WebSocket connection closed")
-                if self.reconnect:
-                    await self._reconnect()
-                else:
-                    break
-            except Exception as e:
-                logger.error(f"Error in message loop: {e}")
-
-    async def _reconnect(self) -> None:
-        """Reconnect with exponential backoff."""
-        for attempt in range(self.max_retries):
-            delay = 1.0 * (2 ** attempt)
-            logger.info(f"Reconnecting in {delay}s (attempt {attempt + 1})")
-            await asyncio.sleep(delay)
-            try:
-                await self.connect()
-                logger.info("Reconnected successfully")
-                return
-            except Exception as e:
-                logger.error(f"Reconnect failed: {e}")
-        raise ConnectionError("Max reconnection attempts reached")
-
-    async def _handle_message(self, data: Dict) -> None:
-        """Handle incoming WebSocket message."""
-        msg_type = data.get("type")
-        if msg_type == "message":
-            for handler in self._message_handlers:
-                asyncio.create_task(handler(data))
-        elif msg_type == "ack":
-            if data.get("id") in self._ack_handlers:
-                self._ack_handlers[data["id"]].set_result(data)
-
     async def register_capabilities(self, capabilities: List[Capability]) -> AgentIdentity:
-        """Register agent capabilities."""
-        response = await self._http.post(
-            f"/api/v1/agents/{self.agent_id}/capabilities",
-            json=[cap.__dict__ for cap in capabilities],
+        """Update capabilities for an existing agent identity."""
+        response = await self._http.put(
+            f"/api/v1/agents/{self.agent_id}",
+            json={
+                "name": self.name,
+                "version": self.version,
+                "provider": self.provider,
+                "capabilities": [cap.__dict__ for cap in capabilities],
+            },
         )
         if response.status_code == 401:
-            raise AuthenticationError("Invalid API key")
+            raise AuthenticationError("Invalid token")
+        elif response.status_code == 404:
+            raise AgentMsgError("Agent must already exist before capabilities can be updated")
         elif response.status_code == 429:
             raise RateLimitError("Rate limit exceeded")
         elif response.status_code != 200:
             raise AgentMsgError(f"Failed to register: {response.text}")
-        return AgentIdentity(**response.json())
+        payload = response.json()
+        return AgentIdentity(
+            agent_id=payload["id"],
+            public_key=payload.get("publicKey", ""),
+            name=payload.get("name"),
+            version=payload.get("version"),
+            provider=payload.get("provider"),
+            capabilities=[
+                Capability(**capability) for capability in payload.get("capabilities", [])
+            ],
+        )
 
     async def send_heartbeat(self) -> None:
         """Send heartbeat."""
@@ -255,22 +223,26 @@ class Client:
         delivery: DeliveryGuarantee = DeliveryGuarantee.AT_LEAST_ONCE,
         metadata: Optional[Dict] = None,
     ) -> SendResult:
-        """Send a message to agents."""
-        message = Message(
-            id=str(uuid.uuid4()),
-            conversation_id=str(uuid.uuid4()),
-            message_type=message_type,
-            sender_id=self.agent_id,
-            recipients=recipients,
-            content=content,
-            metadata=metadata or {},
-            delivery_guarantee=delivery,
+        """Send a message to agents using the REST API."""
+        response = await self._http.post(
+            "/api/v1/messages",
+            json={
+                "messageType": message_type.value,
+                "recipients": recipients,
+                "content": content,
+                "metadata": metadata or {},
+                "deliveryGuarantee": delivery.value,
+            },
         )
+        if response.status_code == 401:
+            raise AuthenticationError("Invalid token")
+        if response.status_code == 429:
+            raise RateLimitError("Rate limit exceeded")
+        if response.status_code != 201:
+            raise AgentMsgError(f"Failed to send message: {response.text}")
 
-        ws_message = message.to_ws_dict()
-        await self._ws.send(json.dumps(ws_message))
-
-        return SendResult(message_id=message.id, status="sent")
+        payload = response.json()
+        return SendResult(message_id=payload["messageId"], status=payload["status"])
 
     async def send_task_request(
         self,
@@ -288,22 +260,13 @@ class Client:
         )
 
     def on_message(self, handler: Callable[[Message], None]) -> None:
-        """Register a message handler."""
-        self._message_handlers.append(handler)
+        """Realtime hooks are unavailable until the server exposes websocket support."""
+        _ = handler
+        raise AgentMsgError("Realtime message handlers are not available in the current server build")
 
     async def receive_messages(self) -> AsyncIterator[Message]:
-        """Async iterator for incoming messages."""
-        queue: asyncio.Queue = asyncio.Queue()
-
-        async def handler(data: Dict):
-            await queue.put(Message.from_dict(data))
-
-        self.on_message(handler)
-        while self._running:
-            try:
-                yield await asyncio.wait_for(queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                continue
+        """Placeholder until realtime transport is available on the server."""
+        raise AgentMsgError("Realtime message streaming is not available in the current server build")
 
     async def discover_agents(
         self,
@@ -311,18 +274,31 @@ class Client:
         min_success_rate: Optional[float] = None,
     ) -> List[AgentIdentity]:
         """Discover agents by capability."""
-        params = {}
-        if capability_type:
-            params["capabilityType"] = capability_type
+        payload: Dict[str, Any] = {
+            "capabilities": [capability_type] if capability_type else [],
+            "tags": {},
+        }
         if min_success_rate is not None:
-            params["minSuccessRate"] = min_success_rate
+            payload["tags"]["minSuccessRate"] = str(min_success_rate)
 
-        response = await self._http.get(
+        response = await self._http.post(
             "/api/v1/discovery/query",
-            params=params,
+            json=payload,
         )
         if response.status_code != 200:
             raise AgentMsgError(f"Discovery failed: {response.text}")
 
         data = response.json()
-        return [AgentIdentity(**a) for a in data.get("agents", [])]
+        return [
+            AgentIdentity(
+                agent_id=agent["id"],
+                public_key=agent.get("publicKey", ""),
+                name=agent.get("name"),
+                version=agent.get("version"),
+                provider=agent.get("provider"),
+                capabilities=[
+                    Capability(**capability) for capability in agent.get("capabilities", [])
+                ],
+            )
+            for agent in data.get("agents", [])
+        ]

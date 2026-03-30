@@ -38,6 +38,8 @@ logs/
 tmp/
 temp/
 *.tmp
+__pycache__/
+*.pyc
 
 # Build artifacts
 dist/

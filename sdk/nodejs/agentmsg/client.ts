@@ -1,17 +1,14 @@
 import axios, { AxiosInstance } from 'axios';
 import { EventEmitter } from 'eventemitter3';
-import { WebSocketClient, WSMessage } from './websocket';
 import {
   Agent,
-  Message,
   Capability,
+  Message,
   MessageType,
   DeliveryGuarantee,
   SendResult,
-  AgentStatus,
   Subscription,
   SubType,
-  SubStatus,
   SubscriptionFilter,
 } from './models';
 import {
@@ -19,13 +16,16 @@ import {
   ConnectionError,
   AuthenticationError,
   RateLimitError,
-  TimeoutError,
 } from './errors';
 
 export interface ClientConfig {
   apiKey: string;
   agentId: string;
   endpoint?: string;
+  publicKey?: string;
+  name?: string;
+  version?: string;
+  provider?: string;
   reconnect?: boolean;
   maxRetries?: number;
 }
@@ -33,13 +33,13 @@ export interface ClientConfig {
 export class Client extends EventEmitter {
   private config: ClientConfig;
   private http: AxiosInstance;
-  private ws: WebSocketClient | null = null;
-  private messageHandlers: ((msg: Message) => void)[] = [];
 
   constructor(config: ClientConfig) {
     super();
     this.config = {
       endpoint: 'https://api.agentmsg.cloud',
+      version: '0.1.0',
+      provider: 'agentmsg-nodejs-sdk',
       reconnect: true,
       maxRetries: 5,
       ...config,
@@ -51,37 +51,14 @@ export class Client extends EventEmitter {
       baseURL,
       headers: {
         Authorization: `Bearer ${this.config.apiKey}`,
-        'X-Agent-ID': this.config.agentId,
       },
       timeout: 30000,
     });
   }
 
   async connect(): Promise<void> {
-    const wsUrl = `${this.config.endpoint!.replace('https://', 'wss://')}/api/v1/ws?token=${this.config.apiKey}&agent_id=${this.config.agentId}`;
-
-    this.ws = new WebSocketClient(wsUrl, this.config.reconnect, this.config.maxRetries);
-
-    this.ws.on('message', (msg: WSMessage) => {
-      if (msg.type === 'message' && msg.content) {
-        const message = this.parseMessage(msg);
-        this.messageHandlers.forEach(handler => handler(message));
-        this.emit('message', message);
-      } else if (msg.type === 'ack') {
-        this.emit('ack', msg);
-      }
-    });
-
-    this.ws.on('disconnected', () => {
-      this.emit('disconnected');
-    });
-
-    this.ws.on('reconnecting', (info: { attempt: number; delay: number }) => {
-      this.emit('reconnecting', info);
-    });
-
     try {
-      await this.ws.connect();
+      await this.http.get('/health');
       this.emit('connected');
     } catch (error) {
       throw new ConnectionError(`Failed to connect: ${error}`);
@@ -89,39 +66,24 @@ export class Client extends EventEmitter {
   }
 
   async disconnect(): Promise<void> {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
     this.emit('disconnected');
-  }
-
-  private parseMessage(wsMsg: WSMessage): Message {
-    return {
-      id: wsMsg.id || '',
-      conversationId: wsMsg.conversationId || '',
-      messageType: (wsMsg.subType as MessageType) || MessageType.GENERIC,
-      senderId: wsMsg.sender?.agentId || '',
-      recipients: wsMsg.recipients || [],
-      content: wsMsg.content,
-      metadata: wsMsg.metadata,
-      deliveryGuarantee: (wsMsg.deliveryGuarantee as DeliveryGuarantee) || DeliveryGuarantee.AT_LEAST_ONCE,
-      status: 'received',
-      tenantId: '',
-      createdAt: wsMsg.createdAt?.toString() || new Date().toISOString(),
-    };
   }
 
   async registerCapabilities(capabilities: Capability[]): Promise<Agent> {
     try {
-      const response = await this.http.post<Agent>(
-        `/api/v1/agents/${this.config.agentId}/capabilities`,
-        capabilities
-      );
+      const response = await this.http.put<Agent>(`/api/v1/agents/${this.config.agentId}`, {
+        name: this.config.name || this.config.agentId,
+        version: this.config.version,
+        provider: this.config.provider,
+        capabilities,
+      });
       return response.data;
     } catch (error: any) {
       if (error.response?.status === 401) {
         throw new AuthenticationError('Invalid API key');
+      }
+      if (error.response?.status === 404) {
+        throw new AgentMsgError('Agent must already exist before capabilities can be updated');
       }
       if (error.response?.status === 429) {
         throw new RateLimitError('Rate limit exceeded');
@@ -145,27 +107,24 @@ export class Client extends EventEmitter {
     delivery: DeliveryGuarantee = DeliveryGuarantee.AT_LEAST_ONCE,
     metadata?: Record<string, any>
   ): Promise<SendResult> {
-    if (!this.ws || !this.ws.isConnected()) {
-      throw new ConnectionError('Not connected');
+    try {
+      const response = await this.http.post<SendResult>('/api/v1/messages', {
+        messageType,
+        recipients,
+        content,
+        metadata: metadata || {},
+        deliveryGuarantee: delivery,
+      });
+      return response.data;
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        throw new AuthenticationError('Invalid token');
+      }
+      if (error.response?.status === 429) {
+        throw new RateLimitError('Rate limit exceeded');
+      }
+      throw new AgentMsgError(`Failed to send message: ${error}`);
     }
-
-    const msg: WSMessage = {
-      type: 'message',
-      id: this.generateId(),
-      conversationId: this.generateId(),
-      subType: messageType,
-      recipients,
-      content,
-      metadata: metadata || {},
-      deliveryGuarantee: delivery,
-    };
-
-    this.ws.send(msg);
-
-    return {
-      messageId: msg.id!,
-      status: 'sent',
-    };
   }
 
   async sendTaskRequest(
@@ -183,7 +142,8 @@ export class Client extends EventEmitter {
   }
 
   onMessage(handler: (msg: Message) => void): void {
-    this.messageHandlers.push(handler);
+    void handler;
+    throw new AgentMsgError('Realtime message handlers are not available in the current server build');
   }
 
   async discoverAgents(
@@ -192,12 +152,14 @@ export class Client extends EventEmitter {
     maxLatencyMs?: number
   ): Promise<Agent[]> {
     try {
-      const params: Record<string, any> = {};
-      if (capabilityType) params.capabilityType = capabilityType;
-      if (minSuccessRate) params.minSuccessRate = minSuccessRate;
-      if (maxLatencyMs) params.maxLatencyMs = maxLatencyMs;
+      const tags: Record<string, string> = {};
+      if (minSuccessRate !== undefined) tags.minSuccessRate = String(minSuccessRate);
+      if (maxLatencyMs !== undefined) tags.maxLatencyMs = String(maxLatencyMs);
 
-      const response = await this.http.get<{ agents: Agent[] }>('/api/v1/discovery/query', { params });
+      const response = await this.http.post<{ agents: Agent[] }>('/api/v1/discovery/query', {
+        capabilities: capabilityType ? [capabilityType] : [],
+        tags,
+      });
       return response.data.agents;
     } catch (error) {
       throw new AgentMsgError(`Discovery failed: ${error}`);
@@ -221,8 +183,8 @@ export class Client extends EventEmitter {
 
   async listSubscriptions(): Promise<Subscription[]> {
     try {
-      const response = await this.http.get<Subscription[]>('/api/v1/subscriptions');
-      return response.data;
+      const response = await this.http.get<{ subscriptions: Subscription[] }>('/api/v1/subscriptions');
+      return response.data.subscriptions;
     } catch (error) {
       throw new AgentMsgError(`Failed to list subscriptions: ${error}`);
     }
@@ -234,10 +196,6 @@ export class Client extends EventEmitter {
     } catch (error) {
       throw new AgentMsgError(`Failed to delete subscription: ${error}`);
     }
-  }
-
-  private generateId(): string {
-    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
 }
 

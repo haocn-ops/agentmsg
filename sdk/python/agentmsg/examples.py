@@ -59,13 +59,16 @@ async def capability_discovery_example():
 
 
 async def exactly_once_example():
-    """Exactly-once delivery example."""
+    """The current server build does not expose realtime streaming yet."""
     api_key = os.getenv("AGENTMSG_API_KEY", "test-api-key")
     agent_id = os.getenv("AGENTMSG_AGENT_ID", "test-agent-id")
 
     async with Client(api_key=api_key, agent_id=agent_id) as client:
-        async for message in client.receive_messages():
-            print(f"Received (exactly-once): {message.content}")
+        try:
+            async for message in client.receive_messages():
+                print(f"Received (exactly-once): {message.content}")
+        except Exception as exc:
+            print(f"Realtime receive is not available yet: {exc}")
 
 
 if __name__ == "__main__":

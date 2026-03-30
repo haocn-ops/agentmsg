@@ -65,7 +65,6 @@ pip install agentmsg
 from agentmsg import Client, MessageType, DeliveryGuarantee
 
 async with Client(api_key="your-api-key", agent_id="your-agent-id") as client:
-    await client.register_capabilities([...])
     result = await client.send_message(
         content={"text": "Hello!"},
         recipients=["recipient-id"],
@@ -80,7 +79,7 @@ npm install agentmsg
 ```
 
 ```typescript
-import { AgentMsgClient } from 'agentmsg';
+import { AgentMsgClient, MessageType } from 'agentmsg';
 
 const client = new AgentMsgClient({
   apiKey: 'your-api-key',
@@ -88,12 +87,18 @@ const client = new AgentMsgClient({
 });
 
 await client.connect();
-await client.sendMessage({
-  content: { text: 'Hello!' },
-  recipients: ['recipient-id'],
-  messageType: 'generic'
-});
+await client.sendMessage(
+  { text: 'Hello!' },
+  ['recipient-id'],
+  MessageType.GENERIC
+);
 ```
+
+SDK notes:
+
+- Current SDKs use the implemented REST API for send, heartbeat, discovery, and subscriptions.
+- Realtime WebSocket hooks are still experimental client-side code because the current server build does not expose `/api/v1/ws`.
+- Capability updates assume the authenticated agent already exists on the server.
 
 ### Go
 
