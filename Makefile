@@ -1,7 +1,7 @@
 # Build and Development
 ###########################
 
-.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke openapi k8s-deploy-staging k8s-deploy-production
+.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke openapi k8s-deploy-staging k8s-deploy-production test-sdk-go test-sdk-python
 
 # Go parameters
 GOCMD=go
@@ -45,6 +45,8 @@ help:
 	@echo "  make openapi       Show the OpenAPI spec path"
 	@echo "  make k8s-deploy-staging    Deploy the staging overlay"
 	@echo "  make k8s-deploy-production Deploy the production overlay"
+	@echo "  make test-sdk-go   Run Go SDK tests"
+	@echo "  make test-sdk-python Run Python SDK tests"
 	@echo "  make clean         Clean build artifacts"
 
 # Install dependencies
@@ -84,6 +86,12 @@ smoke:
 
 openapi:
 	@echo "OpenAPI spec: docs are served from /openapi.yaml and source lives at internal/api/openapi.yaml"
+
+test-sdk-go:
+	cd sdk/go/agentmsg && $(GOTEST) ./...
+
+test-sdk-python:
+	PYTHONPATH=sdk/python python3 -m unittest discover -s sdk/python/tests
 
 # Run linter
 lint:

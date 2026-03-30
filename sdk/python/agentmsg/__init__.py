@@ -11,7 +11,11 @@ from typing import Any, Dict, List, Optional, Callable, AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
-import httpx
+
+try:
+    import httpx
+except ImportError:  # pragma: no cover - exercised in dependency-light environments
+    httpx = None
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +146,7 @@ class Client:
         self.reconnect = reconnect
         self.max_retries = max_retries
 
-        self._http: Optional[httpx.AsyncClient] = None
+        self._http: Optional[Any] = None
         self._running = False
         self._message_handlers: List[Callable] = []
 
@@ -155,6 +159,8 @@ class Client:
 
     async def connect(self) -> None:
         """Initialize the HTTP client for AgentMsg."""
+        if httpx is None:
+            raise AgentMsgError("httpx is required to use the Python SDK")
         http_endpoint = self.endpoint.replace("wss://", "https://").replace("ws://", "http://")
         self._http = httpx.AsyncClient(
             base_url=http_endpoint,
