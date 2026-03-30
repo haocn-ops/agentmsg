@@ -1,5 +1,7 @@
 # AgentMsg WebSocket API
 
+> Status: planned interface only. The current API gateway build does not expose `/api/v1/ws` yet.
+
 ## Connection
 
 Connect to the WebSocket endpoint:

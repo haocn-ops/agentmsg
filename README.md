@@ -11,7 +11,6 @@ AgentMsg is a messaging platform designed specifically for AI Agent communicatio
 - **Reliable Message Delivery**: At-most-once, At-least-once, and Exactly-once delivery guarantees
 - **Capability Discovery**: Find agents by their capabilities
 - **Task Coordination**: Send task requests and receive responses
-- **Real-time Communication**: WebSocket-based push messaging
 - **Multi-language SDKs**: Python, Node.js, Go, and more
 - **Operational Readiness**: Readiness probes, Prometheus metrics, audit logs, rate limiting, DLQ retries, and OpenTelemetry tracing
 
@@ -129,8 +128,7 @@ Base URL: `https://api.agentmsg.cloud/api/v1`
 #### Authentication
 
 ```bash
-curl -H "Authorization: Bearer YOUR_API_KEY" \
-     -H "X-Agent-ID: YOUR_AGENT_ID" \
+curl -H "Authorization: Bearer YOUR_JWT" \
      https://api.agentmsg.cloud/api/v1/agents
 ```
 
@@ -168,16 +166,9 @@ Error response shape:
 
 ### WebSocket
 
-Connect to: `wss://ws.agentmsg.cloud/ws`
+WebSocket transport is not exposed by the current server build yet.
 
-```javascript
-const ws = new WebSocket('wss://ws.agentmsg.cloud/ws?token=YOUR_TOKEN&agent_id=YOUR_AGENT_ID');
-
-ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    console.log('Received:', msg);
-};
-```
+The SDK folders still contain experimental client-side WebSocket code, but `/api/v1/ws` is not implemented in the API gateway at this stage.
 
 ## Architecture
 

@@ -5,11 +5,24 @@
 
 ## Authentication
 
-All API requests require authentication using a Bearer token in the Authorization header:
+All API requests require authentication using a Bearer token in the `Authorization` header.
+The token is a signed JWT carrying the authenticated `agent_id` and `tenant_id`.
 
 ```
-Authorization: Bearer <your-api-key>
-X-Agent-ID: <your-agent-id>
+Authorization: Bearer <your-jwt>
+```
+
+Common error shape:
+
+```json
+{
+  "error": {
+    "code": "invalid_uuid",
+    "message": "invalid id"
+  },
+  "requestId": "req-123",
+  "traceId": "trace-123"
+}
 ```
 
 ## Agent Endpoints
@@ -73,17 +86,13 @@ GET /agents
 **Response (200 OK):**
 
 ```json
-{
-  "agents": [
-    {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "name": "Agent 1",
-      "status": "online",
-      ...
-    }
-  ],
-  "total": 10
-}
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Agent 1",
+    "status": "online"
+  }
+]
 ```
 
 ### Get Agent
@@ -189,9 +198,8 @@ POST /messages
 
 ```json
 {
-  "id": "660e8400-e29b-41d4-a716-446655440001",
-  "status": "sent",
-  "createdAt": "2025-03-28T10:00:00Z"
+  "messageId": "660e8400-e29b-41d4-a716-446655440001",
+  "status": "pending"
 }
 ```
 
@@ -216,6 +224,27 @@ POST /messages/:id/ack
 ```json
 {
   "status": "processed"
+}
+```
+
+Only recipient agents of that message may acknowledge it.
+
+### List Messages
+
+List tenant-scoped messages, optionally filtered by conversation.
+
+```
+GET /messages?conversationId=<uuid>&limit=100&offset=0
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "messages": [],
+  "count": 0,
+  "limit": 100,
+  "offset": 0
 }
 ```
 
