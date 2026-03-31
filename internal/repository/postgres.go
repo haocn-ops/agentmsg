@@ -156,6 +156,30 @@ func (p *PostgresDB) Ping(ctx context.Context) error {
 	return p.db.PingContext(ctx)
 }
 
+func (p *PostgresDB) TenantExists(ctx context.Context, id uuid.UUID) (bool, error) {
+	if p == nil || p.db == nil {
+		return false, sql.ErrConnDone
+	}
+
+	var exists bool
+	if err := p.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM tenants WHERE id = $1)`, id); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (p *PostgresDB) AgentExists(ctx context.Context, id uuid.UUID) (bool, error) {
+	if p == nil || p.db == nil {
+		return false, sql.ErrConnDone
+	}
+
+	var exists bool
+	if err := p.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1 AND deleted_at IS NULL)`, id); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 type AgentRepository struct {
 	db *sqlx.DB
 }

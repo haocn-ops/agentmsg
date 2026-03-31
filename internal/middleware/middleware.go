@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -99,7 +100,7 @@ func (m *Middleware) Authenticate() gin.HandlerFunc {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			observability.RecordAuthFailure("missing_header")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
+			respondAuthError(c, http.StatusUnauthorized, "missing_authorization", "missing authorization header")
 			c.Abort()
 			return
 		}
@@ -107,14 +108,14 @@ func (m *Middleware) Authenticate() gin.HandlerFunc {
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		if token == authHeader {
 			observability.RecordAuthFailure("invalid_format")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization format"})
+			respondAuthError(c, http.StatusUnauthorized, "invalid_authorization_format", "invalid authorization format")
 			c.Abort()
 			return
 		}
 
 		if m.auth == nil {
 			observability.RecordAuthFailure("service_unavailable")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication service unavailable"})
+			respondAuthError(c, http.StatusUnauthorized, "authentication_unavailable", "authentication service unavailable")
 			c.Abort()
 			return
 		}
@@ -122,9 +123,39 @@ func (m *Middleware) Authenticate() gin.HandlerFunc {
 		claims, err := m.auth.ValidateToken(token)
 		if err != nil {
 			observability.RecordAuthFailure("invalid_token")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			respondAuthError(c, http.StatusUnauthorized, "invalid_token", "invalid token")
 			c.Abort()
 			return
+		}
+		if m.db != nil {
+			exists, err := m.db.TenantExists(c.Request.Context(), claims.TenantID)
+			if err != nil {
+				observability.RecordAuthFailure("tenant_lookup_failed")
+				respondAuthError(c, http.StatusServiceUnavailable, "tenant_lookup_unavailable", "tenant lookup unavailable")
+				c.Abort()
+				return
+			}
+			if !exists {
+				observability.RecordAuthFailure("unknown_tenant")
+				respondAuthError(c, http.StatusUnauthorized, "unknown_tenant", "unknown tenant")
+				c.Abort()
+				return
+			}
+			if !isBootstrapAgentRegistration(c) {
+				exists, err := m.db.AgentExists(c.Request.Context(), claims.AgentID)
+				if err != nil {
+					observability.RecordAuthFailure("agent_lookup_failed")
+					respondAuthError(c, http.StatusServiceUnavailable, "agent_lookup_unavailable", "agent lookup unavailable")
+					c.Abort()
+					return
+				}
+				if !exists {
+					observability.RecordAuthFailure("unknown_agent")
+					respondAuthError(c, http.StatusUnauthorized, "unknown_agent", "unknown agent")
+					c.Abort()
+					return
+				}
+			}
 		}
 
 		c.Set("agent_id", claims.AgentID.String())
@@ -132,6 +163,21 @@ func (m *Middleware) Authenticate() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func respondAuthError(c *gin.Context, status int, code, message string) {
+	c.JSON(status, gin.H{
+		"error": gin.H{
+			"code":    code,
+			"message": message,
+		},
+		"requestId": c.GetString("request_id"),
+		"traceId":   c.GetString("trace_id"),
+	})
+}
+
+func isBootstrapAgentRegistration(c *gin.Context) bool {
+	return c.Request.Method == http.MethodPost && c.Request.URL.Path == "/api/v1/agents"
 }
 
 func (m *Middleware) RateLimit() gin.HandlerFunc {
@@ -226,12 +272,16 @@ func (m *Middleware) AuditLog() gin.HandlerFunc {
 			return
 		}
 
-		tenantID := parseOptionalUUID(c.GetString("tenant_id"))
-		agentID := parseOptionalUUID(c.GetString("agent_id"))
 		path := c.FullPath()
 		if path == "" {
 			path = c.Request.URL.Path
 		}
+		metadata := model.AuditMetadata{
+			"route":  path,
+			"status": c.Writer.Status(),
+		}
+		tenantID := m.resolveAuditTenantID(c, metadata)
+		agentID := m.resolveAuditAgentID(c, metadata)
 
 		entry := &model.AuditLog{
 			ID:           uuid.New(),
@@ -247,11 +297,8 @@ func (m *Middleware) AuditLog() gin.HandlerFunc {
 			StatusCode:   c.Writer.Status(),
 			ClientIP:     c.ClientIP(),
 			UserAgent:    c.Request.UserAgent(),
-			Metadata: model.AuditMetadata{
-				"route":  path,
-				"status": c.Writer.Status(),
-			},
-			CreatedAt: time.Now(),
+			Metadata:     metadata,
+			CreatedAt:    time.Now(),
 		}
 
 		if err := m.db.CreateAuditLog(c.Request.Context(), entry); err != nil {
@@ -261,6 +308,46 @@ func (m *Middleware) AuditLog() gin.HandlerFunc {
 		}
 		observability.RecordAuditLog(entry.Action, entry.StatusCode)
 	}
+}
+
+func (m *Middleware) resolveAuditTenantID(c *gin.Context, metadata model.AuditMetadata) *uuid.UUID {
+	return m.resolveAuditReference(c, metadata, "tenant_id", "claimedTenantID", m.db.TenantExists)
+}
+
+func (m *Middleware) resolveAuditAgentID(c *gin.Context, metadata model.AuditMetadata) *uuid.UUID {
+	return m.resolveAuditReference(c, metadata, "agent_id", "claimedAgentID", m.db.AgentExists)
+}
+
+func (m *Middleware) resolveAuditReference(
+	c *gin.Context,
+	metadata model.AuditMetadata,
+	contextKey string,
+	metadataKey string,
+	exists func(ctx context.Context, id uuid.UUID) (bool, error),
+) *uuid.UUID {
+	raw := c.GetString(contextKey)
+	if raw == "" {
+		return nil
+	}
+
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		metadata[metadataKey] = raw
+		return nil
+	}
+
+	ok, err := exists(c.Request.Context(), parsed)
+	if err != nil {
+		slog.Warn("failed to verify audit log reference", "request_id", c.GetString("request_id"), "context_key", contextKey, "error", err)
+		metadata[metadataKey] = parsed.String()
+		return nil
+	}
+	if !ok {
+		metadata[metadataKey] = parsed.String()
+		return nil
+	}
+
+	return &parsed
 }
 
 func isAuditMethod(method string) bool {
