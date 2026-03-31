@@ -46,8 +46,8 @@
     "eventemitter3": "^5.0.1"
   },
   "devDependencies": {
-    "typescript": "^5.3.3",
-    "@types/node": "^20.11.5",
+    "typescript": "^6.0.2",
+    "@types/node": "^25.5.0",
     "@types/ws": "^8.5.10"
   }
 }
