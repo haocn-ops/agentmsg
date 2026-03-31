@@ -17,7 +17,7 @@ rsync -a \
 cd "$tmp_dir/src"
 
 if python3 -m build --version >/dev/null 2>&1; then
-  python3 -m build --sdist --wheel --outdir "$output_dir" --no-isolation >/dev/null
+  python3 -m build --sdist --wheel --outdir "$output_dir" >/dev/null
 else
   echo "python -m build is required to package the Python SDK" >&2
   echo "install it with: python3 -m pip install build" >&2

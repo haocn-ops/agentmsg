@@ -168,7 +168,12 @@ func (s *IdempotencyService) CheckAndSet(ctx context.Context, key string, messag
 		return false, err
 	}
 
-	s.redis.Expire(ctx, combinedKey, int(ttl.Seconds()))
+	if ttl > 0 {
+		if err := s.redis.Expire(ctx, combinedKey, int(ttl.Seconds())); err != nil {
+			_ = s.redis.Del(ctx, combinedKey)
+			return false, err
+		}
+	}
 
 	return true, nil
 }

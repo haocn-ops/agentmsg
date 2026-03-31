@@ -48,10 +48,10 @@ func Load(path string) (*Config, error) {
 	}
 
 	if cfg.DatabaseURL == "" {
-		cfg.DatabaseURL = "postgres://agentmsg:agentmsg@localhost:5432/agentmsg?sslmode=disable"
+		cfg.DatabaseURL = "postgres://agentmsg:agentmsg@127.0.0.1:5432/agentmsg?sslmode=disable"
 	}
 	if cfg.RedisURL == "" {
-		cfg.RedisURL = "redis://localhost:6379/0"
+		cfg.RedisURL = "redis://127.0.0.1:6379/0"
 	}
 
 	return cfg, nil

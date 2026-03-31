@@ -33,13 +33,7 @@ jobs:
 
       - name: Install Python release tooling
         run: |
-          python3 -m pip install build
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+          python3 -m pip install build wheel
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -63,7 +57,7 @@ jobs:
           golangci-lint run ./...
 
   test:
-    name: Test
+    name: Verify
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -100,6 +94,15 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python release tooling
+        run: |
+          python3 -m pip install build wheel
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -112,26 +115,19 @@ jobs:
           cd sdk/nodejs
           npm ci
 
-      - name: Run tests
+      - name: Install Python SDK dependencies
+        run: |
+          python3 -m pip install -r sdk/python/requirements.txt
+
+      - name: Run verification suite
         env:
-          DATABASE_URL: postgres://agentmsg:agentmsg@localhost:5432/agentmsg_test?sslmode=disable
-          REDIS_URL: redis://localhost:6379/0
+          DATABASE_URL: postgres://agentmsg:agentmsg@127.0.0.1:5432/agentmsg_test?sslmode=disable
+          REDIS_URL: redis://127.0.0.1:6379/0
         run: |
-          go test -v -race -coverprofile=coverage.out ./...
-
-      - name: Run Go SDK tests
-        run: |
-          cd sdk/go/agentmsg
-          go test ./...
-
-      - name: Run Python SDK tests
-        run: |
-          PYTHONPATH=sdk/python python3 -m unittest discover -s sdk/python/tests
-
-      - name: Run Node.js SDK tests
-        run: |
-          cd sdk/nodejs
-          npm test
+          chmod +x ./scripts/verify.sh ./scripts/smoke.sh
+          VERIFY_MANAGE_DOCKER=false \
+          VERIFY_GO_TEST_FLAGS="-v -race -coverprofile=coverage.out" \
+          make verify
 
       - name: Upload coverage
         uses: codecov/codecov-action@v3
@@ -146,10 +142,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python release tooling
+        run: |
+          python3 -m pip install build
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -202,57 +208,10 @@ jobs:
             build/message-engine
           retention-days: 7
 
-  smoke:
-    name: Smoke
-    runs-on: ubuntu-latest
-    needs: [build]
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: agentmsg
-          POSTGRES_PASSWORD: agentmsg
-          POSTGRES_DB: agentmsg_smoke
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Run startup smoke checks
-        env:
-          DATABASE_URL: postgres://agentmsg:agentmsg@localhost:5432/agentmsg_smoke?sslmode=disable
-          REDIS_URL: redis://localhost:6379/0
-        run: |
-          chmod +x ./scripts/smoke.sh
-          ./scripts/smoke.sh
-
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
-    needs: [smoke]
+    needs: [build]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
     steps:
       - name: Checkout code
@@ -293,6 +252,9 @@ jobs:
     needs: [docker]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
     environment: staging
+    env:
+      STAGING_KUBECONFIG: ${{ secrets.STAGING_KUBECONFIG }}
+      STAGING_KUBECONFIG_CONTEXT: ${{ secrets.STAGING_KUBECONFIG_CONTEXT }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -301,11 +263,11 @@ jobs:
         uses: azure/setup-kubectl@v4
 
       - name: Configure kubeconfig
-        if: ${{ secrets.STAGING_KUBECONFIG != '' }}
-        env:
-          STAGING_KUBECONFIG: ${{ secrets.STAGING_KUBECONFIG }}
-          STAGING_KUBECONFIG_CONTEXT: ${{ secrets.STAGING_KUBECONFIG_CONTEXT }}
         run: |
+          if [ -z "$STAGING_KUBECONFIG" ]; then
+            echo "Skipping staging deploy because STAGING_KUBECONFIG is not configured."
+            exit 0
+          fi
           printf '%s' "$STAGING_KUBECONFIG" > "$RUNNER_TEMP/kubeconfig"
           chmod 600 "$RUNNER_TEMP/kubeconfig"
           echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
@@ -314,8 +276,10 @@ jobs:
           fi
 
       - name: Render staging manifests
-        if: ${{ secrets.STAGING_KUBECONFIG != '' }}
         run: |
+          if [ -z "$STAGING_KUBECONFIG" ]; then
+            exit 0
+          fi
           chmod +x ./scripts/render-k8s-manifests.sh
           ./scripts/render-k8s-manifests.sh \
             deployments/k8s/overlays/staging \
@@ -324,12 +288,10 @@ jobs:
             > "$RUNNER_TEMP/agentmsg-staging.yaml"
 
       - name: Apply staging manifests
-        if: ${{ secrets.STAGING_KUBECONFIG != '' }}
         run: |
+          if [ -z "$STAGING_KUBECONFIG" ]; then
+            exit 0
+          fi
           kubectl apply -f "$RUNNER_TEMP/agentmsg-staging.yaml"
           kubectl rollout status deployment/api-gateway -n agentmsg-staging
           kubectl rollout status deployment/message-engine -n agentmsg-staging
-
-      - name: Skip staging deploy when kubeconfig is not configured
-        if: ${{ secrets.STAGING_KUBECONFIG == '' }}
-        run: echo "Skipping staging deploy because STAGING_KUBECONFIG is not configured."

@@ -7,8 +7,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 cd "${REPO_ROOT}"
 
-: "${DATABASE_URL:=postgres://agentmsg:agentmsg@localhost:5432/agentmsg?sslmode=disable}"
-: "${REDIS_URL:=redis://localhost:6379/0}"
+: "${DATABASE_URL:=postgres://agentmsg:agentmsg@127.0.0.1:5432/agentmsg?sslmode=disable}"
+: "${REDIS_URL:=redis://127.0.0.1:6379/0}"
 : "${API_GATEWAY_PORT:=8080}"
 : "${MESSAGE_ENGINE_PORT:=8081}"
 
@@ -44,7 +44,7 @@ wait_for_http() {
 	local url="$1"
 
 	for _ in $(seq 1 60); do
-		if curl -fsS "${url}" >/dev/null; then
+		if curl -fsS "${url}" >/dev/null 2>&1; then
 			return 0
 		fi
 		sleep 1

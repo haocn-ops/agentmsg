@@ -435,10 +435,6 @@ func (s *Server) acknowledgeMessage(c *gin.Context) {
 	})
 }
 
-func (s *Server) getMessageStats(c *gin.Context) {
-	respondError(c, http.StatusNotImplemented, "not_implemented", "not implemented")
-}
-
 func serviceMessageStatusForAck(status model.AckStatus) model.MessageStatus {
 	switch status {
 	case model.AckStatusReceived:

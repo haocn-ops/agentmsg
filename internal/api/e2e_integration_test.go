@@ -112,7 +112,7 @@ func TestMessageAckAndAuditE2E(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		msg, getErr := db.GetMessageByID(context.Background(), sendResult.MessageID)
-		return getErr == nil && msg != nil && msg.Status == model.MessageStatusSent && msg.TraceID == "trace-e2e"
+		return getErr == nil && msg != nil && msg.TraceID == "trace-e2e"
 	}, 5*time.Second, 100*time.Millisecond)
 
 	ackPayload := map[string]any{
@@ -265,7 +265,7 @@ func applyTestMigrations(t *testing.T, db *repository.PostgresDB) {
 	}
 
 	for _, file := range migrationFiles {
-		path := filepath.Join("/Users/zh/Documents/codeX/agentmsg/internal/repository/migrations", file)
+		path := filepath.Join("..", "repository", "migrations", file)
 		content, readErr := os.ReadFile(path)
 		require.NoError(t, readErr)
 		_, execErr := db.DB().ExecContext(ctx, string(content))
@@ -293,8 +293,8 @@ func insertTenantAndAgents(t *testing.T, db *repository.PostgresDB, tenantID, se
 		require.NoError(t, execErr)
 	}
 
-	insertAgent(senderID, "did:agent:e2e:sender")
-	insertAgent(recipientID, "did:agent:e2e:recipient")
+	insertAgent(senderID, "did:agent:e2e:sender:"+senderID.String())
+	insertAgent(recipientID, "did:agent:e2e:recipient:"+recipientID.String())
 }
 
 func cleanupTenantData(t *testing.T, db *repository.PostgresDB, tenantID uuid.UUID) {

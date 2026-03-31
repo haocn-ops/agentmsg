@@ -12,6 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     environment: production
+    env:
+      PRODUCTION_KUBECONFIG: ${{ secrets.PRODUCTION_KUBECONFIG }}
+      PRODUCTION_KUBECONFIG_CONTEXT: ${{ secrets.PRODUCTION_KUBECONFIG_CONTEXT }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,11 +25,11 @@ jobs:
         uses: azure/setup-kubectl@v4
 
       - name: Configure kubeconfig
-        if: ${{ secrets.PRODUCTION_KUBECONFIG != '' }}
-        env:
-          PRODUCTION_KUBECONFIG: ${{ secrets.PRODUCTION_KUBECONFIG }}
-          PRODUCTION_KUBECONFIG_CONTEXT: ${{ secrets.PRODUCTION_KUBECONFIG_CONTEXT }}
         run: |
+          if [ -z "$PRODUCTION_KUBECONFIG" ]; then
+            echo "Skipping production deploy because PRODUCTION_KUBECONFIG is not configured."
+            exit 0
+          fi
           printf '%s' "$PRODUCTION_KUBECONFIG" > "$RUNNER_TEMP/kubeconfig"
           chmod 600 "$RUNNER_TEMP/kubeconfig"
           echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
@@ -35,8 +38,10 @@ jobs:
           fi
 
       - name: Render production manifests
-        if: ${{ secrets.PRODUCTION_KUBECONFIG != '' }}
         run: |
+          if [ -z "$PRODUCTION_KUBECONFIG" ]; then
+            exit 0
+          fi
           chmod +x ./scripts/render-k8s-manifests.sh
           ./scripts/render-k8s-manifests.sh \
             deployments/k8s/overlays/production \
@@ -45,12 +50,10 @@ jobs:
             > "$RUNNER_TEMP/agentmsg-production.yaml"
 
       - name: Deploy to Kubernetes
-        if: ${{ secrets.PRODUCTION_KUBECONFIG != '' }}
         run: |
+          if [ -z "$PRODUCTION_KUBECONFIG" ]; then
+            exit 0
+          fi
           kubectl apply -f "$RUNNER_TEMP/agentmsg-production.yaml"
           kubectl rollout status deployment/api-gateway -n agentmsg
           kubectl rollout status deployment/message-engine -n agentmsg
-
-      - name: Skip production deploy when kubeconfig is not configured
-        if: ${{ secrets.PRODUCTION_KUBECONFIG == '' }}
-        run: echo "Skipping production deploy because PRODUCTION_KUBECONFIG is not configured."
