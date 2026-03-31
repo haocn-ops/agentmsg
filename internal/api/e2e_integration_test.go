@@ -265,7 +265,7 @@ func applyTestMigrations(t *testing.T, db *repository.PostgresDB) {
 	}
 
 	for _, file := range migrationFiles {
-		path := filepath.Join("/Users/zh/Documents/codeX/agentmsg/internal/repository/migrations", file)
+		path := filepath.Join("..", "repository", "migrations", file)
 		content, readErr := os.ReadFile(path)
 		require.NoError(t, readErr)
 		_, execErr := db.DB().ExecContext(ctx, string(content))
