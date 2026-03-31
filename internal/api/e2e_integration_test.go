@@ -293,8 +293,8 @@ func insertTenantAndAgents(t *testing.T, db *repository.PostgresDB, tenantID, se
 		require.NoError(t, execErr)
 	}
 
-	insertAgent(senderID, "did:agent:e2e:sender")
-	insertAgent(recipientID, "did:agent:e2e:recipient")
+	insertAgent(senderID, "did:agent:e2e:sender:"+senderID.String())
+	insertAgent(recipientID, "did:agent:e2e:recipient:"+recipientID.String())
 }
 
 func cleanupTenantData(t *testing.T, db *repository.PostgresDB, tenantID uuid.UUID) {

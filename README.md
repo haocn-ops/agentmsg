@@ -41,6 +41,9 @@ make run
 
 # Verify health, readiness, and metrics endpoints
 make smoke
+
+# Run the full local verification pass
+make verify
 ```
 
 ### Using Docker
@@ -52,6 +55,24 @@ docker compose -f deployments/docker/docker-compose.yml up -d
 # View logs
 docker compose -f deployments/docker/docker-compose.yml logs -f
 ```
+
+## Testing
+
+For a repeatable local verification pass that starts PostgreSQL and Redis, runs the Go test suite, exercises the SDK tests, and finishes with the startup smoke checks:
+
+```bash
+make verify
+```
+
+Useful switches:
+
+- `VERIFY_MANAGE_DOCKER=false make verify` to reuse already-running local dependencies
+- `VERIFY_RUN_SMOKE=false make verify` to skip the startup smoke pass
+- `VERIFY_RUN_SDKS=false make verify` to only run the server-side Go test suite
+- `VERIFY_GO_TEST_FLAGS="-v -race -coverprofile=coverage.out" make verify` to customize the Go test invocation, useful for CI coverage uploads
+
+The GitHub Actions CI workflow reuses the same `make verify` entrypoint so local and CI verification stay aligned.
+The local defaults use `127.0.0.1` for PostgreSQL and Redis to avoid `localhost` resolving to IPv6-only loopback addresses on some machines.
 
 ## SDKs
 

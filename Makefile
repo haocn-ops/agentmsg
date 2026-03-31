@@ -1,7 +1,7 @@
 # Build and Development
 ###########################
 
-.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke openapi k8s-deploy-staging k8s-deploy-production test-sdk-go test-sdk-python test-sdk-nodejs release-check package-sdk-go package-sdk-nodejs package-sdk-python build-release-artifacts bump-version release-notes update-changelog version-tooling-check release-go-sdk-tag
+.PHONY: help build run test test-coverage lint fmt deps clean docker-build docker-up docker-down smoke verify openapi k8s-deploy-staging k8s-deploy-production test-sdk-go test-sdk-python test-sdk-nodejs release-check package-sdk-go package-sdk-nodejs package-sdk-python build-release-artifacts bump-version release-notes update-changelog version-tooling-check release-go-sdk-tag
 
 # Go parameters
 GOCMD=go
@@ -44,6 +44,7 @@ help:
 	@echo "  make docker-down   Stop Docker Compose"
 	@echo "  make migrate       Run database migrations"
 	@echo "  make smoke         Run local startup smoke checks"
+	@echo "  make verify        Run Go, SDK, and smoke checks with local dependencies"
 	@echo "  make openapi       Show the OpenAPI spec path"
 	@echo "  make k8s-deploy-staging    Deploy the staging overlay"
 	@echo "  make k8s-deploy-production Deploy the production overlay"
@@ -96,6 +97,9 @@ test-coverage:
 
 smoke:
 	./scripts/smoke.sh
+
+verify:
+	./scripts/verify.sh
 
 openapi:
 	@echo "OpenAPI spec: docs are served from /openapi.yaml and source lives at internal/api/openapi.yaml"
