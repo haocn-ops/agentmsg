@@ -9,6 +9,7 @@ on:
 env:
   GO_VERSION: '1.21'
   GO_LINT_VERSION: '1.23'
+  GOLANGCI_LINT_VERSION: '1.64.8'
   PYTHON_VERSION: '3.11'
   NODE_VERSION: '20'
   DOCKER_IMAGE: agentmsg
@@ -54,7 +55,7 @@ jobs:
 
       - name: Run golangci-lint
         run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v${{ env.GOLANGCI_LINT_VERSION }}
           golangci-lint run ./...
 
   test:
