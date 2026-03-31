@@ -238,6 +238,9 @@ jobs:
     needs: [docker]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
     environment: staging
+    env:
+      STAGING_KUBECONFIG: ${{ secrets.STAGING_KUBECONFIG }}
+      STAGING_KUBECONFIG_CONTEXT: ${{ secrets.STAGING_KUBECONFIG_CONTEXT }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -246,11 +249,11 @@ jobs:
         uses: azure/setup-kubectl@v4
 
       - name: Configure kubeconfig
-        if: ${{ secrets.STAGING_KUBECONFIG != '' }}
-        env:
-          STAGING_KUBECONFIG: ${{ secrets.STAGING_KUBECONFIG }}
-          STAGING_KUBECONFIG_CONTEXT: ${{ secrets.STAGING_KUBECONFIG_CONTEXT }}
         run: |
+          if [ -z "$STAGING_KUBECONFIG" ]; then
+            echo "Skipping staging deploy because STAGING_KUBECONFIG is not configured."
+            exit 0
+          fi
           printf '%s' "$STAGING_KUBECONFIG" > "$RUNNER_TEMP/kubeconfig"
           chmod 600 "$RUNNER_TEMP/kubeconfig"
           echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
@@ -259,8 +262,10 @@ jobs:
           fi
 
       - name: Render staging manifests
-        if: ${{ secrets.STAGING_KUBECONFIG != '' }}
         run: |
+          if [ -z "$STAGING_KUBECONFIG" ]; then
+            exit 0
+          fi
           chmod +x ./scripts/render-k8s-manifests.sh
           ./scripts/render-k8s-manifests.sh \
             deployments/k8s/overlays/staging \
@@ -269,12 +274,10 @@ jobs:
             > "$RUNNER_TEMP/agentmsg-staging.yaml"
 
       - name: Apply staging manifests
-        if: ${{ secrets.STAGING_KUBECONFIG != '' }}
         run: |
+          if [ -z "$STAGING_KUBECONFIG" ]; then
+            exit 0
+          fi
           kubectl apply -f "$RUNNER_TEMP/agentmsg-staging.yaml"
           kubectl rollout status deployment/api-gateway -n agentmsg-staging
           kubectl rollout status deployment/message-engine -n agentmsg-staging
-
-      - name: Skip staging deploy when kubeconfig is not configured
-        if: ${{ secrets.STAGING_KUBECONFIG == '' }}
-        run: echo "Skipping staging deploy because STAGING_KUBECONFIG is not configured."
