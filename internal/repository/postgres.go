@@ -3,12 +3,13 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 
 	"agentmsg/internal/model"
 )
@@ -178,6 +179,11 @@ func (p *PostgresDB) AgentExists(ctx context.Context, id uuid.UUID) (bool, error
 		return false, err
 	}
 	return exists, nil
+}
+
+func IsUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }
 
 type AgentRepository struct {

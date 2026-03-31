@@ -251,6 +251,87 @@ func TestAgentCreateAndListE2E(t *testing.T) {
 	require.True(t, found)
 }
 
+func TestCreateAgentRejectsDuplicateDID(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	redisURL := os.Getenv("REDIS_URL")
+	if databaseURL == "" || redisURL == "" {
+		t.Skip("DATABASE_URL and REDIS_URL must be set for e2e integration tests")
+	}
+
+	db, err := repository.NewPostgresDB(databaseURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	redisClient, err := repository.NewRedisClient(redisURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, redisClient.Close()) }()
+
+	applyTestMigrations(t, db)
+
+	tenantID := uuid.New()
+	authAgentID := uuid.New()
+	existingAgentID := uuid.New()
+	insertTenantAndAgents(t, db, tenantID, authAgentID, existingAgentID)
+	defer cleanupTenantData(t, db, tenantID)
+
+	authService := service.NewAuthService("test-secret")
+	server := NewServer(&ServerConfig{
+		Addr:         "127.0.0.1:0",
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}, &Dependencies{
+		AgentService:   service.NewAgentService(repository.NewAgentRepository(db), redisClient),
+		MessageService: service.NewMessageService(repository.NewMessageRepository(db), repository.NewAcknowledgementRepository(db), redisClient),
+		AuthService:    authService,
+		Database:       db,
+		Redis:          redisClient,
+		Middleware:     middleware.NewMiddleware(redisClient, db, authService, 1000, time.Minute),
+	})
+
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	defer httpServer.Close()
+
+	token, err := authService.GenerateToken(authAgentID, tenantID)
+	require.NoError(t, err)
+
+	createPayload := map[string]any{
+		"did":          "did:agent:e2e:duplicate-did",
+		"publicKey":    "created-public-key",
+		"name":         "created-agent",
+		"version":      "1.0.0",
+		"provider":     "e2e",
+		"capabilities": []any{},
+	}
+	createBody, err := json.Marshal(createPayload)
+	require.NoError(t, err)
+
+	firstReq, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/agents", bytes.NewReader(createBody))
+	require.NoError(t, err)
+	firstReq.Header.Set("Authorization", "Bearer "+token)
+	firstReq.Header.Set("Content-Type", "application/json")
+
+	firstResp, err := http.DefaultClient.Do(firstReq)
+	require.NoError(t, err)
+	defer firstResp.Body.Close()
+	require.Equal(t, http.StatusCreated, firstResp.StatusCode)
+
+	secondReq, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/agents", bytes.NewReader(createBody))
+	require.NoError(t, err)
+	secondReq.Header.Set("Authorization", "Bearer "+token)
+	secondReq.Header.Set("Content-Type", "application/json")
+
+	secondResp, err := http.DefaultClient.Do(secondReq)
+	require.NoError(t, err)
+	defer secondResp.Body.Close()
+	require.Equal(t, http.StatusConflict, secondResp.StatusCode)
+
+	var payload apiErrorEnvelope
+	require.NoError(t, json.NewDecoder(secondResp.Body).Decode(&payload))
+	require.Equal(t, "agent_conflict", payload.Error.Code)
+	require.Equal(t, "agent already exists", payload.Error.Message)
+}
+
 func TestBootstrapAgentCreatePersistsAuditLogWithoutAgentFK(t *testing.T) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	redisURL := os.Getenv("REDIS_URL")
