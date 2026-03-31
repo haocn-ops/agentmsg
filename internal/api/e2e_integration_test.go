@@ -251,6 +251,324 @@ func TestAgentCreateAndListE2E(t *testing.T) {
 	require.True(t, found)
 }
 
+func TestCreateAgentRejectsDuplicateDID(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	redisURL := os.Getenv("REDIS_URL")
+	if databaseURL == "" || redisURL == "" {
+		t.Skip("DATABASE_URL and REDIS_URL must be set for e2e integration tests")
+	}
+
+	db, err := repository.NewPostgresDB(databaseURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	redisClient, err := repository.NewRedisClient(redisURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, redisClient.Close()) }()
+
+	applyTestMigrations(t, db)
+
+	tenantID := uuid.New()
+	authAgentID := uuid.New()
+	existingAgentID := uuid.New()
+	insertTenantAndAgents(t, db, tenantID, authAgentID, existingAgentID)
+	defer cleanupTenantData(t, db, tenantID)
+
+	authService := service.NewAuthService("test-secret")
+	server := NewServer(&ServerConfig{
+		Addr:         "127.0.0.1:0",
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}, &Dependencies{
+		AgentService:   service.NewAgentService(repository.NewAgentRepository(db), redisClient),
+		MessageService: service.NewMessageService(repository.NewMessageRepository(db), repository.NewAcknowledgementRepository(db), redisClient),
+		AuthService:    authService,
+		Database:       db,
+		Redis:          redisClient,
+		Middleware:     middleware.NewMiddleware(redisClient, db, authService, 1000, time.Minute),
+	})
+
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	defer httpServer.Close()
+
+	token, err := authService.GenerateToken(authAgentID, tenantID)
+	require.NoError(t, err)
+
+	createPayload := map[string]any{
+		"did":          "did:agent:e2e:duplicate-did",
+		"publicKey":    "created-public-key",
+		"name":         "created-agent",
+		"version":      "1.0.0",
+		"provider":     "e2e",
+		"capabilities": []any{},
+	}
+	createBody, err := json.Marshal(createPayload)
+	require.NoError(t, err)
+
+	firstReq, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/agents", bytes.NewReader(createBody))
+	require.NoError(t, err)
+	firstReq.Header.Set("Authorization", "Bearer "+token)
+	firstReq.Header.Set("Content-Type", "application/json")
+
+	firstResp, err := http.DefaultClient.Do(firstReq)
+	require.NoError(t, err)
+	defer firstResp.Body.Close()
+	require.Equal(t, http.StatusCreated, firstResp.StatusCode)
+
+	secondReq, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/agents", bytes.NewReader(createBody))
+	require.NoError(t, err)
+	secondReq.Header.Set("Authorization", "Bearer "+token)
+	secondReq.Header.Set("Content-Type", "application/json")
+
+	secondResp, err := http.DefaultClient.Do(secondReq)
+	require.NoError(t, err)
+	defer secondResp.Body.Close()
+	require.Equal(t, http.StatusConflict, secondResp.StatusCode)
+
+	var payload apiErrorEnvelope
+	require.NoError(t, json.NewDecoder(secondResp.Body).Decode(&payload))
+	require.Equal(t, "agent_conflict", payload.Error.Code)
+	require.Equal(t, "agent already exists", payload.Error.Message)
+}
+
+func TestBootstrapAgentCreatePersistsAuditLogWithoutAgentFK(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	redisURL := os.Getenv("REDIS_URL")
+	if databaseURL == "" || redisURL == "" {
+		t.Skip("DATABASE_URL and REDIS_URL must be set for e2e integration tests")
+	}
+
+	db, err := repository.NewPostgresDB(databaseURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	redisClient, err := repository.NewRedisClient(redisURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, redisClient.Close()) }()
+
+	applyTestMigrations(t, db)
+
+	tenantID := uuid.New()
+	bootstrapAgentID := uuid.New()
+	ctx := context.Background()
+	_, err = db.DB().ExecContext(ctx, `
+		INSERT INTO tenants (id, name, slug, plan, limits, usage, status)
+		VALUES ($1, $2, $3, 'standard', '{}'::jsonb, '{}'::jsonb, 'active')
+		ON CONFLICT (id) DO NOTHING
+	`, tenantID, "Bootstrap Tenant", "bootstrap-"+tenantID.String())
+	require.NoError(t, err)
+	defer cleanupTenantData(t, db, tenantID)
+
+	agentRepo := repository.NewAgentRepository(db)
+	messageRepo := repository.NewMessageRepository(db)
+	ackRepo := repository.NewAcknowledgementRepository(db)
+
+	agentService := service.NewAgentService(agentRepo, redisClient)
+	messageService := service.NewMessageService(messageRepo, ackRepo, redisClient)
+	authService := service.NewAuthService("test-secret")
+	server := NewServer(&ServerConfig{
+		Addr:         "127.0.0.1:0",
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}, &Dependencies{
+		AgentService:   agentService,
+		MessageService: messageService,
+		AuthService:    authService,
+		Database:       db,
+		Redis:          redisClient,
+		Middleware:     middleware.NewMiddleware(redisClient, db, authService, 1000, time.Minute),
+	})
+
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	defer httpServer.Close()
+
+	token, err := authService.GenerateToken(bootstrapAgentID, tenantID)
+	require.NoError(t, err)
+
+	createPayload := map[string]any{
+		"did":          "did:agent:e2e:bootstrap-created",
+		"publicKey":    "created-public-key",
+		"name":         "created-agent",
+		"version":      "1.0.0",
+		"provider":     "e2e",
+		"capabilities": []any{},
+	}
+	createBody, err := json.Marshal(createPayload)
+	require.NoError(t, err)
+
+	createReq, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/agents", bytes.NewReader(createBody))
+	require.NoError(t, err)
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("X-Trace-ID", "trace-bootstrap-agent-create")
+
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	defer createResp.Body.Close()
+	require.Equal(t, http.StatusCreated, createResp.StatusCode)
+
+	var auditEntry struct {
+		TenantID *uuid.UUID          `db:"tenant_id"`
+		AgentID  *uuid.UUID          `db:"agent_id"`
+		Action   string              `db:"action"`
+		Metadata model.AuditMetadata `db:"metadata"`
+	}
+	require.Eventually(t, func() bool {
+		queryErr := db.DB().GetContext(ctx, &auditEntry, `
+			SELECT tenant_id, agent_id, action, metadata
+			FROM audit_logs
+			WHERE trace_id = $1
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, "trace-bootstrap-agent-create")
+		return queryErr == nil
+	}, 5*time.Second, 100*time.Millisecond)
+
+	require.NotNil(t, auditEntry.TenantID)
+	require.Equal(t, tenantID, *auditEntry.TenantID)
+	require.Nil(t, auditEntry.AgentID)
+	require.Equal(t, "agents.create", auditEntry.Action)
+	require.Equal(t, bootstrapAgentID.String(), auditEntry.Metadata["claimedAgentID"])
+}
+
+func TestCreateAgentRejectsUnknownTenantToken(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	redisURL := os.Getenv("REDIS_URL")
+	if databaseURL == "" || redisURL == "" {
+		t.Skip("DATABASE_URL and REDIS_URL must be set for e2e integration tests")
+	}
+
+	db, err := repository.NewPostgresDB(databaseURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	redisClient, err := repository.NewRedisClient(redisURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, redisClient.Close()) }()
+
+	applyTestMigrations(t, db)
+
+	authService := service.NewAuthService("test-secret")
+	server := NewServer(&ServerConfig{
+		Addr:         "127.0.0.1:0",
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}, &Dependencies{
+		AgentService:   service.NewAgentService(repository.NewAgentRepository(db), redisClient),
+		MessageService: service.NewMessageService(repository.NewMessageRepository(db), repository.NewAcknowledgementRepository(db), redisClient),
+		AuthService:    authService,
+		Database:       db,
+		Redis:          redisClient,
+		Middleware:     middleware.NewMiddleware(redisClient, db, authService, 1000, time.Minute),
+	})
+
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	defer httpServer.Close()
+
+	token, err := authService.GenerateToken(uuid.New(), uuid.New())
+	require.NoError(t, err)
+
+	createPayload := map[string]any{
+		"did":          "did:agent:e2e:unknown-tenant",
+		"publicKey":    "created-public-key",
+		"name":         "created-agent",
+		"version":      "1.0.0",
+		"provider":     "e2e",
+		"capabilities": []any{},
+	}
+	createBody, err := json.Marshal(createPayload)
+	require.NoError(t, err)
+
+	createReq, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/agents", bytes.NewReader(createBody))
+	require.NoError(t, err)
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createReq.Header.Set("Content-Type", "application/json")
+
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	defer createResp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, createResp.StatusCode)
+
+	var payload apiErrorEnvelope
+	require.NoError(t, json.NewDecoder(createResp.Body).Decode(&payload))
+	require.Equal(t, "unknown_tenant", payload.Error.Code)
+	require.Equal(t, "unknown tenant", payload.Error.Message)
+	require.NotEmpty(t, payload.RequestID)
+	require.NotEmpty(t, payload.TraceID)
+}
+
+func TestSendMessageRejectsUnknownAgentToken(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	redisURL := os.Getenv("REDIS_URL")
+	if databaseURL == "" || redisURL == "" {
+		t.Skip("DATABASE_URL and REDIS_URL must be set for e2e integration tests")
+	}
+
+	db, err := repository.NewPostgresDB(databaseURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	redisClient, err := repository.NewRedisClient(redisURL)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, redisClient.Close()) }()
+
+	applyTestMigrations(t, db)
+
+	tenantID := uuid.New()
+	recipientID := uuid.New()
+	insertTenantAndAgents(t, db, tenantID, uuid.New(), recipientID)
+	defer cleanupTenantData(t, db, tenantID)
+
+	authService := service.NewAuthService("test-secret")
+	server := NewServer(&ServerConfig{
+		Addr:         "127.0.0.1:0",
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}, &Dependencies{
+		AgentService:   service.NewAgentService(repository.NewAgentRepository(db), redisClient),
+		MessageService: service.NewMessageService(repository.NewMessageRepository(db), repository.NewAcknowledgementRepository(db), redisClient),
+		AuthService:    authService,
+		Database:       db,
+		Redis:          redisClient,
+		Middleware:     middleware.NewMiddleware(redisClient, db, authService, 1000, time.Minute),
+	})
+
+	httpServer := httptest.NewServer(server.httpServer.Handler)
+	defer httpServer.Close()
+
+	token, err := authService.GenerateToken(uuid.New(), tenantID)
+	require.NoError(t, err)
+
+	sendPayload := map[string]any{
+		"messageType": "generic",
+		"recipients":  []string{recipientID.String()},
+		"content":     map[string]any{"text": "should be rejected"},
+	}
+	reqBody, err := json.Marshal(sendPayload)
+	require.NoError(t, err)
+
+	sendReq, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/messages", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	sendReq.Header.Set("Authorization", "Bearer "+token)
+	sendReq.Header.Set("Content-Type", "application/json")
+
+	sendResp, err := http.DefaultClient.Do(sendReq)
+	require.NoError(t, err)
+	defer sendResp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, sendResp.StatusCode)
+
+	var payload apiErrorEnvelope
+	require.NoError(t, json.NewDecoder(sendResp.Body).Decode(&payload))
+	require.Equal(t, "unknown_agent", payload.Error.Code)
+	require.Equal(t, "unknown agent", payload.Error.Message)
+	require.NotEmpty(t, payload.RequestID)
+	require.NotEmpty(t, payload.TraceID)
+}
+
 func applyTestMigrations(t *testing.T, db *repository.PostgresDB) {
 	t.Helper()
 

@@ -36,6 +36,8 @@ func respondServiceError(c *gin.Context, err error, notFoundCode string) {
 	switch {
 	case errors.Is(err, service.ErrAgentNotFound), errors.Is(err, service.ErrMessageNotFound):
 		respondError(c, http.StatusNotFound, notFoundCode, err.Error())
+	case errors.Is(err, service.ErrAgentAlreadyExists):
+		respondError(c, http.StatusConflict, "agent_conflict", err.Error())
 	case errors.Is(err, service.ErrInvalidMessage), errors.Is(err, service.ErrInvalidToken):
 		respondError(c, http.StatusBadRequest, "invalid_request", err.Error())
 	case errors.Is(err, service.ErrUnauthorized):

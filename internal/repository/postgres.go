@@ -3,12 +3,13 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 
 	"agentmsg/internal/model"
 )
@@ -154,6 +155,35 @@ func (p *PostgresDB) Ping(ctx context.Context) error {
 		return sql.ErrConnDone
 	}
 	return p.db.PingContext(ctx)
+}
+
+func (p *PostgresDB) TenantExists(ctx context.Context, id uuid.UUID) (bool, error) {
+	if p == nil || p.db == nil {
+		return false, sql.ErrConnDone
+	}
+
+	var exists bool
+	if err := p.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM tenants WHERE id = $1)`, id); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (p *PostgresDB) AgentExists(ctx context.Context, id uuid.UUID) (bool, error) {
+	if p == nil || p.db == nil {
+		return false, sql.ErrConnDone
+	}
+
+	var exists bool
+	if err := p.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1 AND deleted_at IS NULL)`, id); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func IsUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }
 
 type AgentRepository struct {

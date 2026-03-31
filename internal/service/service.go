@@ -21,6 +21,7 @@ import (
 
 var (
 	ErrAgentNotFound      = errors.New("agent not found")
+	ErrAgentAlreadyExists = errors.New("agent already exists")
 	ErrMessageNotFound    = errors.New("message not found")
 	ErrUnauthorized       = errors.New("unauthorized")
 	ErrInvalidToken       = errors.New("invalid token")
@@ -54,6 +55,9 @@ func (s *AgentService) Register(ctx context.Context, agent *model.Agent) error {
 	agent.UpdatedAt = time.Now()
 
 	if err := s.repo.Create(ctx, agent); err != nil {
+		if repository.IsUniqueViolation(err) {
+			return ErrAgentAlreadyExists
+		}
 		return err
 	}
 
