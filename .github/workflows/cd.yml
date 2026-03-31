@@ -17,12 +17,12 @@ jobs:
       PRODUCTION_KUBECONFIG_CONTEXT: ${{ secrets.PRODUCTION_KUBECONFIG_CONTEXT }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
+        uses: azure/setup-kubectl@v5
 
       - name: Configure kubeconfig
         run: |
