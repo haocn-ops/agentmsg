@@ -10,6 +10,7 @@ env:
   GO_VERSION: '1.21'
   GO_LINT_VERSION: '1.23'
   GOLANGCI_LINT_VERSION: '1.64.8'
+  CODECOV_CLI_VERSION: '11.2.8'
   PYTHON_VERSION: '3.11'
   NODE_VERSION: '20'
   DOCKER_IMAGE: agentmsg
@@ -133,10 +134,17 @@ jobs:
 
       - name: Upload coverage
         if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage.out
-          fail_ci_if_error: false
+        continue-on-error: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          curl -Os "https://cli.codecov.io/v${CODECOV_CLI_VERSION}/linux/codecov"
+          chmod +x codecov
+          if [ -n "${CODECOV_TOKEN}" ]; then
+            ./codecov --verbose upload-process --disable-search -t "${CODECOV_TOKEN}" -n "verify-${GITHUB_RUN_ID}" -f coverage.out
+          else
+            ./codecov --verbose upload-process --disable-search -n "verify-${GITHUB_RUN_ID}" -f coverage.out
+          fi
 
   release-check:
     name: Release Check
