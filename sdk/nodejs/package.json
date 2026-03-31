@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "npm run build && node --test tests/**/*.test.cjs",
+    "test": "npm run build && node --test tests/*.test.cjs",
     "prepack": "npm run build",
     "pack:dry-run": "npm pack --dry-run"
   },

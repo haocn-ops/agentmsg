@@ -33,7 +33,7 @@ jobs:
 
       - name: Install Python release tooling
         run: |
-          python3 -m pip install build
+          python3 -m pip install build wheel
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -101,7 +101,7 @@ jobs:
 
       - name: Install Python release tooling
         run: |
-          python3 -m pip install build
+          python3 -m pip install build wheel
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
