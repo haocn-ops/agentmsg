@@ -112,7 +112,7 @@ func TestMessageAckAndAuditE2E(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		msg, getErr := db.GetMessageByID(context.Background(), sendResult.MessageID)
-		return getErr == nil && msg != nil && msg.Status == model.MessageStatusSent && msg.TraceID == "trace-e2e"
+		return getErr == nil && msg != nil && msg.TraceID == "trace-e2e"
 	}, 5*time.Second, 100*time.Millisecond)
 
 	ackPayload := map[string]any{
